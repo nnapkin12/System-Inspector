@@ -8,7 +8,7 @@ I am not familiar with prompting, but here is basically what I said. The AI did 
 
 > ok so what could i build that could look at my systems internals, all of my hardware, my os, and you could click on each peice of hardware it picks up on in a card neatly, it would have a dropdown with data, meaning, if someone has some random nvidia and its some specific notebook gpu, the application would get it,? and than also, it would have a system monitor where you can see ALL vitals, that would be in a system monitor for gpu, cpu, stuff, temps, util %, but it would be good ui, maybe dark backround and make sure that the system scanner/vitals are in seperate tabs so that it isnt too cluttered...
 
-I won’t paste the whole chat, but that’s the idea. I’m very new to AI generating code (and folders on my PC by itself) — I wanted to try this out and surprisingly it did pretty well.
+I won’t paste the whole chat, but that’s basically what i said. I’m very new to AI generating code and I wanted to try this out and surprisingly it did pretty well.
 
 - **No cloud, no accounts, local APIs**
 - Data never leaves your machine (`127.0.0.1` only)
@@ -20,11 +20,11 @@ I won’t paste the whole chat, but that’s the idea. I’m very new to AI gene
 
 ## Screenshots
 
-### System scan (before inventory)
+### System scan (before)
 
 ![System scan empty state](docs/scan.png)
 
-### Utilization (live vitals)
+### Utilization (vitals)
 
 ![Utilization live monitoring](docs/utilization.png)
 
@@ -105,10 +105,6 @@ Then open **System Inspector** from your desktop’s application search.
 │  collectors/ · psutil, NVML, sysfs  │
 └─────────────────────────────────────┘
 ```
-
-Same idea as Electron: a privileged process reads the machine; the UI is HTML/CSS/JS. Here the shell is **pywebview** and the system layer is **Python**.
-
----
 
 ## Project structure
 
