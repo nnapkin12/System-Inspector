@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Launch System Inspector as a desktop app (window + local backend).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+if [[ ! -d .venv ]]; then
+  python3 -m venv .venv
+  .venv/bin/pip install -U pip
+  .venv/bin/pip install -r requirements.txt
+fi
+
+# shellcheck disable=SC1091
+source .venv/bin/activate
+
+# Ensure deps (quiet if already installed)
+pip install -q -r requirements.txt
+
+exec python desktop_app.py

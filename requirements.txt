@@ -1,0 +1,8 @@
+# Free, open-source only — no paid APIs or accounts required.
+psutil>=6.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+websockets>=12.0
+pydantic>=2.0.0
+nvidia-ml-py>=12.0.0
+pywebview>=5.0
