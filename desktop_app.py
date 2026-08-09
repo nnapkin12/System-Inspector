@@ -99,16 +99,23 @@ def _open_ui(*, reuse: bool) -> None:
             background_color="#0a0809",
             text_select=True,
         )
-        # optional icon — platform dependent
         if logo.is_file():
             try:
                 window.set_icon(str(logo))  # type: ignore[attr-defined]
             except Exception:
                 pass
-        webview.start()
+        webview.start(gui="gtk")
         return
     except Exception as exc:
         print(f"Native window unavailable ({exc}); opening browser instead.")
+        print(
+            "For a real window on Pop!_OS / Ubuntu, run once:\n"
+            "  sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1\n"
+            "Then either re-run this launcher, or recreate the venv:\n"
+            "  rm -rf .venv && python3 -m venv --system-site-packages .venv\n"
+            "  .venv/bin/pip install -r requirements.txt\n"
+            "  ./SystemInspector"
+        )
         webbrowser.open(URL)
         if reuse:
             return

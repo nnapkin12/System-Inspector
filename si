@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Short alias for sysinspect (same CLI).
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sysinspect" "$@"

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# System Inspector CLI — personalized names (same program).
+#   ./sysinspect gpu
+#   ./si cpu temp
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+if [[ ! -d .venv ]]; then
+  python3 -m venv --system-site-packages .venv
+  .venv/bin/pip install -U pip
+  .venv/bin/pip install -r requirements.txt
+fi
+
+# shellcheck disable=SC1091
+source .venv/bin/activate
+exec python "$ROOT/sysinspect.py" "$@"
