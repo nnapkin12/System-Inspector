@@ -1,5 +1,5 @@
 # System Inspector
-![AI](https://shields.io)
+
 
 Local hardware scan + live vitals on **Linux** (Windows maybe later).
 
