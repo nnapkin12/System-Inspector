@@ -1,6 +1,6 @@
 # Commands — System Inspector
 
-After install (`./install.sh`), this works from **any folder** — no app window, no website required.
+After install (`./install.sh`), this works from **any folder** .
 
 Type `si` in a terminal. Longer name works too: `sysinspect` (example: `sysinspect status`).
 

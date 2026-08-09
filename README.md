@@ -65,7 +65,7 @@ si live cpu gpu    # live bars (Ctrl+C to stop)
 si help            # reminder inside the terminal
 ```
 
-**Full list of commands:** [COMMANDS.md](COMMANDS.md)
+**Full list of commands:** [COMMANDS.md](https://github.com/nnapkin12/System-Inspector/blob/main/COMMANDS.md)
 
 ---
 
@@ -78,7 +78,7 @@ Same data with a clickable window (not required for `si`):
 ./run.sh              # browser at http://127.0.0.1:8787
 ```
 
-If the window opens in a browser instead of a real app, Ubuntu/Pop may need:
+If the window opens in a browser instead of a real app, Ubuntu/linux may need:
 
 ```bash
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
