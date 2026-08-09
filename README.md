@@ -8,7 +8,7 @@ Local hardware scan + live vitals on **Linux** (Windows maybe later).
 
 ## Terminal (main)
 
-After install, use from **any** terminal. No window/server required.
+After install, use from **any** terminal with: 'si', 'systeminspect','sysinspect'. No window/server required.
 
 ```bash
 git clone https://github.com/nnapkin12/System-Inspector.git
@@ -24,12 +24,12 @@ source ~/.bashrc
 ```
 
 ```bash
-sysinspect status
-sysinspect gpu
-sysinspect cpu temp
+si status
+si gpu
+si cpu temp
 si motherboard
-sysinspect watch gpu
-sysinspect help
+si watch gpu
+si help
 ```
 
 **All commands → [COMMANDS.md](COMMANDS.md)**

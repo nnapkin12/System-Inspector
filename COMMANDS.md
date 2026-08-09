@@ -1,12 +1,12 @@
 # Command reference
 
-Short terminal commands for **System Inspector**.
+List of terminal commands for **System Inspector**.
 
-After [`./install.sh`](install.sh), you can run these from **any** directory — **no** desktop window or server needs to be running.
+After [`./install.sh`](install.sh), you can run these from any directory, no window or server needs to be running.
 
 ```bash
-sysinspect <command>
-si <command>          # same tool, shorter name
+si <command>
+sysinspect <command>          # longer name if you want for some reason
 ```
 
 Need a reminder offline?
@@ -20,29 +20,29 @@ sysinspect help
 ## Quick start (after install)
 
 ```bash
-sysinspect status
-sysinspect gpu
-sysinspect cpu temp
-sysinspect temps
-sysinspect motherboard
-sysinspect watch gpu
+si status
+si gpu
+si cpu temp
+si temps
+si motherboard
+si watch gpu
 ```
 
 ---
 
 ## How commands work
 
-You type **resources** (what you care about) and optional **fields** (how to filter the answer).
+Type **resources** (a peice of hardware eg. 'cpu' 'gpu') and optional **fields** (how to filter the answer, weather you want its temp, util %, etc.).
 
 | Pattern | Example | Meaning |
 |--------|---------|---------|
 | resource | `gpu` | Full GPU info |
 | resource + field | `gpu temp` | GPU temperatures only |
-| several resources | `cpu gpu` | Both blocks |
-| resources + field | `cpu gpu temp` | Temps for those resources |
-| bare field | `temp` / `temps` | All main temperatures |
+| several resources | `cpu gpu` | Both CPU and GPU info |
+| resources + field | `cpu gpu temp` | Temps for CPU and GPU |
+| bare field | `temp` / `temps` | All temperatures |
 
-You do **not** need a separate command for every phrase — common words stack.
+ — common words stack.
 
 ---
 
@@ -66,7 +66,7 @@ You do **not** need a separate command for every phrase — common words stack.
 
 ---
 
-## Fields (optional)
+## Fields 
 
 Put these **after** a resource (or alone for `temp` / `temps`):
 
@@ -81,61 +81,59 @@ Put these **after** a resource (or alone for `temp` / `temps`):
 
 ## Examples
 
-### Everyday checks
-
 ```bash
-sysinspect status
-sysinspect gpu
-sysinspect cpu
-sysinspect temps
-sysinspect ram
-sysinspect battery
+si status
+si gpu
+si cpu
+si temps
+si ram
+si battery
 ```
 
 ### Combinations
 
 ```bash
-sysinspect cpu temp
-sysinspect gpu temp
-sysinspect gpu usage
-sysinspect cpu usage
-sysinspect cpu gpu temp
-sysinspect motherboard
-sysinspect os
-sysinspect disk
-sysinspect net
-sysinspect scan
-sysinspect all
+si cpu temp
+si gpu temp
+si gpu usage
+si cpu usage
+si cpu gpu temp
+si motherboard
+si os
+si disk
+si net
+si scan
+si all
 ```
 
-### Live refresh (big bar meters)
+### Live refresh 
 
 ```bash
-sysinspect watch gpu
-sysinspect live cpu gpu          # load + temp bars (best for OC)
-sysinspect live temps
-sysinspect live                  # status overview
-sysinspect graph temps           # bars + optional line charts
-sysinspect live gpu --graph      # same opt-in charts
+si live gpu
+si live cpu gpu          # load + temp bars (best for OC)
+si live temps
+si live                  # status overview
+si graph temps           # bars + optional line charts
+si live gpu --graph      # same opt-in charts
 ```
 
-Live mode is **large block bars** only by default (`[████░░░░░░]  38°C`) — no clunky line charts. Use `graph` or `--graph` if you still want history charts. Ctrl+C to stop.
+Live mode is **large block bars** only by default (`[████░░░░░░]  38°C`). Use `graph` or `--graph` if you want history charts, but they are kinda clunky. Ctrl+C to stop.
 
 ### JSON (for scripts)
 
 ```bash
-sysinspect gpu --json
-sysinspect cpu temp -j
-sysinspect status --plain --json
+si gpu --json
+si cpu temp -j
+si status --plain --json
 ```
 
 **`--plain` / `-p`** = text only (no banner, colors, meters). Best for pipes and logs.
 
-### Scan option
+### Scan your hardware
 
 ```bash
-sysinspect scan
-sysinspect scan --pci    # include full PCI device list (noisy)
+si scan
+si scan --pci    # include full PCI device list (noisy)
 ```
 
 ---
