@@ -60,13 +60,29 @@ def collect_gpus_inventory() -> list[dict]:
 
 
 def collect_gpus_vitals() -> list[dict]:
-    """Live GPU stats where available (NVIDIA best; others best-effort)."""
-    vitals = _nvidia_vitals()
-    if vitals:
-        return vitals
+    """Live GPU stats where available (NVIDIA + AMD/Intel best-effort).
 
-    # AMD/Intel: temperatures from hwmon + rough load if available
-    return _fallback_vitals_from_hwmon()
+    Never drop iGPU temps just because discrete NVML exists, and never
+    invent an NVIDIA reading from a lone amdgpu hwmon sensor.
+    """
+    out: list[dict] = []
+    seen_labels: set[str] = set()
+
+    for g in _nvidia_vitals() or []:
+        key = (g.get("name") or f"nvidia-{g.get('index')}").lower()
+        if key in seen_labels:
+            continue
+        seen_labels.add(key)
+        out.append(g)
+
+    for g in _fallback_vitals_from_hwmon() or []:
+        key = f"{(g.get('vendor') or '').lower()}:{(g.get('name') or '').lower()}"
+        if key in seen_labels:
+            continue
+        seen_labels.add(key)
+        out.append(g)
+
+    return out
 
 
 def _from_nvidia_nvml() -> list[dict]:
@@ -301,12 +317,14 @@ def _from_lspci() -> list[dict]:
         id_match = re.search(r"\[([0-9a-f]{4}:[0-9a-f]{4})\]", rest, re.I)
         if id_match:
             pci_id = id_match.group(1)
-        name = re.sub(r"\s*\[[0-9a-f]{4}:[0-9a-f]{4}\]\s*", " ", rest, flags=re.I).strip()
+        raw_name = re.sub(r"\s*\[[0-9a-f]{4}:[0-9a-f]{4}\]\s*", " ", rest, flags=re.I).strip()
+        name = short_gpu_name(raw_name) or raw_name
         out.append(
             safe_dict(
                 category="gpu",
                 vendor=vendor,
                 name=name,
+                pci_name=raw_name,
                 pci_slot=slot,
                 pci_id=pci_id,
                 device_class=kind,
@@ -366,20 +384,69 @@ def _fallback_vitals_from_hwmon() -> list[dict]:
         return []
     readings = psutil.sensors_temperatures(fahrenheit=False) or {}
     out: list[dict] = []
-    for name, entries in readings.items():
-        low = name.lower()
-        if not any(x in low for x in ("amdgpu", "radeon", "i915", "xe", "gpu")):
+    for chip, entries in readings.items():
+        low = chip.lower()
+        if not any(x in low for x in ("amdgpu", "radeon", "i915", "xe", "nouveau", "gpu")):
             continue
+        vendor = "AMD" if any(x in low for x in ("amd", "radeon")) else (
+            "Intel" if any(x in low for x in ("i915", "xe")) else chip
+        )
+        # Prefer a junction/edge reading over every redundant sensor
+        best = None
         for entry in entries:
-            out.append(
-                safe_dict(
-                    vendor=name,
-                    name=entry.label or name,
-                    temperature_c=round(entry.current, 1) if entry.current is not None else None,
-                    source="hwmon",
-                )
+            if entry.current is None:
+                continue
+            label = (entry.label or chip).lower()
+            score = 0
+            if "edge" in label or "junction" in label or "gpu" in label:
+                score = 2
+            elif "mem" in label:
+                score = 1
+            cand = (score, entry.current, entry.label or chip)
+            if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
+                best = cand
+        if best is None:
+            continue
+        out.append(
+            safe_dict(
+                vendor=vendor,
+                name=f"{vendor} iGPU" if vendor in ("AMD", "Intel") else best[2],
+                temperature_c=round(best[1], 1),
+                source="hwmon",
             )
+        )
     return out
+
+
+def short_gpu_name(name: str | None) -> str:
+    """
+    Turn noisy lspci strings into something readable on one line.
+    e.g. 'NVIDIA Corporation AD107M [GeForce RTX 4050 Max-Q / Mobile] (rev a1)'
+      → 'GeForce RTX 4050 Max-Q / Mobile'
+    """
+    if not name:
+        return "GPU"
+    s = str(name).strip()
+    brand_tags = {"amd/ati", "amd", "ati", "nvidia", "intel", "via"}
+    # Prefer meaningful [product] brackets (skip short brand tags + PCI ids)
+    for cand in re.findall(r"\[([^\]]{2,})\]", s):
+        if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}", cand, re.I):
+            continue
+        if cand.strip().lower() in brand_tags:
+            continue
+        if len(cand.strip()) < 4:
+            continue
+        s = cand.strip()
+        break
+    else:
+        s = re.sub(r"^NVIDIA Corporation\s+", "", s, flags=re.I)
+        s = re.sub(r"^Advanced Micro Devices,\s*Inc\.\s*", "", s, flags=re.I)
+        s = re.sub(r"^\[?AMD/?ATI\]?\s*", "", s, flags=re.I)
+        s = re.sub(r"\s*\[[0-9a-f]{4}:[0-9a-f]{4}\]\s*", " ", s, flags=re.I)
+        s = re.sub(r"\s*\[AMD/?ATI\]\s*", " ", s, flags=re.I)
+        s = re.sub(r"\s*\(rev\s+[0-9a-f]+\)$", "", s, flags=re.I)
+        s = re.sub(r"\s+", " ", s).strip()
+    return (s or "GPU")[:48]
 
 
 def _nvml_str(value) -> str:

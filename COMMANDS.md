@@ -55,6 +55,7 @@ You do **not** need a separate command for every phrase — common words stack.
 | `gpu` | `graphics`, `nvidia`, `vram` | Each GPU: load, VRAM, temp, power, driver |
 | `ram` | `memory`, `mem` | Memory & swap usage |
 | `temps` | `temp`, `thermal`, `temperature`, `temperatures` | CPU + GPU temperatures |
+| `fans` | `fan`, `cooling` | Fan RPM / PWM when reported |
 | `motherboard` | `board`, `mb`, `mobo`, `mainboard` | Machine, board, BIOS |
 | `os` | `system`, `host`, `kernel` | Distro, kernel, desktop, hostname |
 | `disk` | `storage`, `ssd`, `hdd`, `drive` | Disks, mounts, free space, I/O rates |
@@ -107,16 +108,18 @@ sysinspect scan
 sysinspect all
 ```
 
-### Live refresh + graphs
+### Live refresh (big bar meters)
 
 ```bash
 sysinspect watch gpu
-sysinspect graph temps
-sysinspect live cpu temp --interval 0.5
-sysinspect watch status --no-graph   # text meters only
+sysinspect live cpu gpu          # load + temp bars (best for OC)
+sysinspect live temps
+sysinspect live                  # status overview
+sysinspect graph temps           # bars + optional line charts
+sysinspect live gpu --graph      # same opt-in charts
 ```
 
-Watch mode draws a big **SYSTEM INSPECTOR** header, block meters for %, and a live terminal line graph (`plotext`). Ctrl+C to stop.
+Live mode is **large block bars** only by default (`[████░░░░░░]  38°C`) — no clunky line charts. Use `graph` or `--graph` if you still want history charts. Ctrl+C to stop.
 
 ### JSON (for scripts)
 
@@ -126,7 +129,7 @@ sysinspect cpu temp -j
 sysinspect status --plain --json
 ```
 
-Use `--plain` / `-p` to skip banner/colors (good in pipes).
+**`--plain` / `-p`** = text only (no banner, colors, meters). Best for pipes and logs.
 
 ### Scan option
 
@@ -142,10 +145,10 @@ sysinspect scan --pci    # include full PCI device list (noisy)
 | Flag | Meaning |
 |------|---------|
 | `--json` / `-j` | Print JSON instead of human text |
-| `--plain` / `-p` | No banner, colors, or meters |
+| `--plain` / `-p` | Text only — no banner, colors, meters |
 | `--pci` | With `scan`: include full PCI list |
 | `--interval N` | With `watch`: seconds between updates (default `1`) |
-| `--no-graph` | With `watch`: skip live graph (text only) |
+| `--graph` | With `watch`/`live`: also draw line charts (off by default) |
 | `help` / `-h` / `--help` | Show in-terminal help |
 
 ---

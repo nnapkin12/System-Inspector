@@ -7,10 +7,12 @@ Users remember short names (gpu, cpu, temps). Combinations like
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.collectors import get_inventory, get_vitals
+from backend.collectors.gpu import short_gpu_name as _short_gpu
 
 # Canonical resource → display name
 CANONICAL = (
@@ -19,6 +21,7 @@ CANONICAL = (
     "gpu",
     "memory",
     "temps",
+    "fans",
     "board",
     "os",
     "disk",
@@ -67,6 +70,9 @@ ALIASES: dict[str, str] = {
     "battery": "battery",
     "bat": "battery",
     "power": "battery",
+    "fans": "fans",
+    "fan": "fans",
+    "cooling": "fans",
     "scan": "scan",
     "inventory": "scan",
     "hw": "scan",
@@ -159,9 +165,18 @@ def resource_status() -> dict:
     vit = get_vitals()
     s = inv.get("summary") or {}
     cpu = vit.get("cpu") or {}
-    gpus = vit.get("gpus") or []
     ram = (vit.get("memory") or {}).get("ram") or {}
-    g0 = gpus[0] if gpus else {}
+    gpus = vit.get("gpus") or []
+    # Prefer discrete NVIDIA for the summary "GPU" slots when multi-GPU
+    g0 = next(
+        (g for g in gpus if "nvidia" in (g.get("vendor") or "").lower() or "geforce" in (g.get("name") or "").lower()),
+        None,
+    )
+    if g0 is None:
+        g0 = gpus[0] if gpus else {}
+    # secondary for a second temperature if available
+    others = [g for g in gpus if g is not g0]
+    g1 = others[0] if others else {}
     return _ok(
         "status",
         {
@@ -175,7 +190,7 @@ def resource_status() -> dict:
                 "cpu_percent": cpu.get("usage_percent"),
                 "cpu_temp_c": _cpu_temp(cpu),
                 "gpu_percent": g0.get("usage_percent"),
-                "gpu_temp_c": g0.get("temperature_c"),
+                "gpu_temp_c": g0.get("temperature_c") if g0.get("temperature_c") is not None else g1.get("temperature_c"),
                 "ram_percent": ram.get("percent"),
             },
         },
@@ -208,23 +223,54 @@ def resource_gpu() -> dict:
     inv = get_inventory(include_pci=False)
     vit = get_vitals()
     inv_gpus = [c for c in inv.get("components", []) if c.get("category") == "gpu"]
-    live = vit.get("gpus") or []
-    devices = []
-    for i, g in enumerate(inv_gpus):
-        live_g = live[i] if i < len(live) else (live[0] if live and i == 0 else {})
-        # Match by name vaguely if indices differ
-        if not live_g and live:
-            for lg in live:
-                if (lg.get("name") or "") in (g.get("name") or "") or (g.get("name") or "") in (
-                    lg.get("name") or ""
+    live = list(vit.get("gpus") or [])
+    used_live: set[int] = set()
+
+    def _match_live(g: dict) -> dict:
+        g_vendor = (g.get("vendor") or "").lower()
+        g_name = (g.get("name") or "").lower()
+        # 1) vendor + name token
+        for i, lg in enumerate(live):
+            if i in used_live:
+                continue
+            lv = (lg.get("vendor") or "").lower()
+            ln = (lg.get("name") or "").lower()
+            if g_vendor and lv:
+                if g_vendor in lv or lv in g_vendor or (
+                    "nvidia" in g_vendor and "nvidia" in (lv + ln)
+                ) or (
+                    "amd" in g_vendor and ("amd" in lv or "radeon" in lv or "amd" in ln)
+                ) or (
+                    "intel" in g_vendor and ("intel" in lv or "i915" in lv)
                 ):
-                    live_g = lg
-                    break
+                    # Prefer NVIDIA live for NVIDIA inventory, etc.
+                    if ("nvidia" in g_vendor and "nvidia" not in lv and "nvidia" not in ln
+                            and "nv" not in ln):
+                        continue
+                    used_live.add(i)
+                    return lg
+        # 2) substring name match
+        for i, lg in enumerate(live):
+            if i in used_live:
+                continue
+            ln = (lg.get("name") or "").lower()
+            if ln and (ln in g_name or g_name in ln or any(
+                tok in ln for tok in re.findall(r"[a-z0-9]{4,}", g_name) if len(tok) > 4
+            )):
+                used_live.add(i)
+                return lg
+        return {}
+
+    devices = []
+    for g in inv_gpus:
+        live_g = _match_live(g)
+        short = _short_gpu(g.get("name") or live_g.get("name"))
         devices.append(
             {
-                "name": g.get("name") or live_g.get("name"),
+                "name": short,
+                "full_name": g.get("pci_name") or g.get("name") or live_g.get("name"),
                 "vendor": g.get("vendor") or live_g.get("vendor"),
-                "driver_version": g.get("driver_version"),
+                "driver_version": g.get("driver_version") or live_g.get("driver_version"),
                 "vram_total_mb": g.get("vram_total_mb") or live_g.get("vram_total_mb"),
                 "vram_used_mb": live_g.get("vram_used_mb"),
                 "usage_percent": live_g.get("usage_percent"),
@@ -233,15 +279,38 @@ def resource_gpu() -> dict:
                 "power_limit_watts": live_g.get("power_limit_watts"),
                 "graphics_mhz": live_g.get("graphics_mhz"),
                 "mem_mhz": live_g.get("mem_mhz"),
+                "fan_percent": live_g.get("fan_percent"),
                 "pci_id": g.get("pci_id"),
-                "source": g.get("source") or live_g.get("source"),
+                "source": live_g.get("source") or g.get("source"),
+            }
+        )
+
+    # Unmatched live sensors (e.g. dGPU when inventory missed NVML name)
+    for i, lg in enumerate(live):
+        if i in used_live:
+            continue
+        devices.append(
+            {
+                "name": _short_gpu(lg.get("name")),
+                "full_name": lg.get("name"),
+                "vendor": lg.get("vendor"),
+                "vram_total_mb": lg.get("vram_total_mb"),
+                "vram_used_mb": lg.get("vram_used_mb"),
+                "usage_percent": lg.get("usage_percent"),
+                "temp_c": lg.get("temperature_c"),
+                "power_watts": lg.get("power_watts"),
+                "power_limit_watts": lg.get("power_limit_watts"),
+                "graphics_mhz": lg.get("graphics_mhz"),
+                "mem_mhz": lg.get("mem_mhz"),
+                "fan_percent": lg.get("fan_percent"),
+                "source": lg.get("source"),
             }
         )
     if not devices and live:
         for lg in live:
             devices.append(
                 {
-                    "name": lg.get("name"),
+                    "name": _short_gpu(lg.get("name")),
                     "vendor": lg.get("vendor"),
                     "vram_total_mb": lg.get("vram_total_mb"),
                     "vram_used_mb": lg.get("vram_used_mb"),
@@ -264,12 +333,22 @@ def resource_temps() -> dict:
     vit = get_vitals()
     cpu = vit.get("cpu") or {}
     gpus = vit.get("gpus") or []
+    # Prefer resource_gpu matching when inventory is available — still use short names here
+    matched = resource_gpu()["data"].get("devices") or []
+    gpu_temps = [
+        {"name": g.get("name"), "temp_c": g.get("temp_c")}
+        for g in matched
+    ]
+    if not gpu_temps:
+        gpu_temps = [
+            {"name": _short_gpu(g.get("name")), "temp_c": g.get("temperature_c")} for g in gpus
+        ]
     return _ok(
         "temps",
         {
             "cpu_c": _cpu_temp(cpu),
             "cpu_sensors": cpu.get("temperatures"),
-            "gpus": [{"name": g.get("name"), "temp_c": g.get("temperature_c")} for g in gpus],
+            "gpus": gpu_temps,
             "all_sensors": vit.get("temperatures"),
         },
     )
@@ -353,6 +432,19 @@ def resource_battery() -> dict:
     return _ok("battery", {"present": True, **bat})
 
 
+def resource_fans() -> dict:
+    vit = get_vitals()
+    fans = vit.get("fans") or []
+    return _ok(
+        "fans",
+        {
+            "available": bool(fans),
+            "fans": fans,
+            "note": None if fans else "No fan RPM/PWM reported (common on locked laptop EC).",
+        },
+    )
+
+
 def resource_scan(include_pci: bool = False) -> dict:
     inv = get_inventory(include_pci=include_pci)
     return _ok(
@@ -380,6 +472,7 @@ def resource_all() -> dict:
             "disk": resource_disk()["data"],
             "net": resource_net()["data"],
             "battery": resource_battery()["data"],
+            "fans": resource_fans()["data"],
         },
     )
 
@@ -390,6 +483,7 @@ HANDLERS: dict[str, Callable[..., dict]] = {
     "gpu": resource_gpu,
     "memory": resource_memory,
     "temps": resource_temps,
+    "fans": resource_fans,
     "board": resource_board,
     "os": resource_os,
     "disk": resource_disk,
@@ -601,15 +695,17 @@ def format_human(payload: dict) -> str:
 
     if r == "status":
         live = d.get("live") or {}
+        gpus = d.get("gpus") or []
+        gpus_s = ", ".join(_short_gpu(g) for g in gpus) if gpus else "—"
         lines = [
             f"{d.get('hostname') or 'host'}  ·  {d.get('os') or '—'}",
             f"CPU  {d.get('cpu') or '—'}",
-            f"GPU  {', '.join(d.get('gpus') or []) or '—'}",
+            f"GPU  {gpus_s}",
             f"RAM  {d.get('ram_gb')} GB",
-            f"Live  CPU { _pct(live.get('cpu_percent')) }  ·  "
-            f"GPU { _pct(live.get('gpu_percent')) }  ·  "
-            f"RAM { _pct(live.get('ram_percent')) }",
-            f"Temps  CPU {_deg(live.get('cpu_temp_c')) }  ·  GPU {_deg(live.get('gpu_temp_c')) }",
+            f"Live  CPU {_pct(live.get('cpu_percent'))}  ·  "
+            f"GPU {_pct(live.get('gpu_percent'))}  ·  "
+            f"RAM {_pct(live.get('ram_percent'))}",
+            f"Temps  CPU {_deg(live.get('cpu_temp_c'))}  ·  GPU {_deg(live.get('gpu_temp_c'))}",
         ]
         return "\n".join(lines)
 
@@ -636,28 +732,31 @@ def format_human(payload: dict) -> str:
         if "temp" in fields and "usage" not in fields and "name" not in fields:
             lines = ["GPU temps"]
             for g in devices:
-                lines.append(f"  {g.get('name') or 'GPU'}  {_deg(g.get('temp_c'))}")
+                lines.append(f"  {_short_gpu(g.get('name')):28}  {_deg(g.get('temp_c'))}")
             return "\n".join(lines)
         if fields == {"name"}:
-            return "GPU\n" + "\n".join(f"  {g.get('name')}" for g in devices)
+            return "GPU\n" + "\n".join(f"  {_short_gpu(g.get('name'))}" for g in devices)
         if fields == {"usage"}:
             lines = ["GPU load"]
             for g in devices:
                 lines.append(
-                    f"  {g.get('name') or 'GPU'}  {_pct(g.get('usage_percent'))}  ·  "
+                    f"  {_short_gpu(g.get('name')):28}  {_pct(g.get('usage_percent'))}  ·  "
                     f"VRAM {g.get('vram_used_mb') or '—'} / {g.get('vram_total_mb') or '—'} MB"
                 )
             return "\n".join(lines)
         lines = ["GPU"]
         for g in devices:
-            lines.append(f"  {g.get('name') or '—'}")
+            lines.append(f"  {_short_gpu(g.get('name'))}")
             lines.append(
                 f"    Load {_pct(g.get('usage_percent'))}  ·  Temp {_deg(g.get('temp_c'))}  ·  "
                 f"Power {g.get('power_watts') if g.get('power_watts') is not None else '—'} W"
             )
+            vram_u, vram_t = g.get("vram_used_mb"), g.get("vram_total_mb")
+            freq = g.get("graphics_mhz")
+            freq_s = f"{freq} MHz" if freq is not None else "—"
             lines.append(
-                f"    VRAM {g.get('vram_used_mb') or '—'} / {g.get('vram_total_mb') or '—'} MB  ·  "
-                f"Driver {g.get('driver_version') or '—'}"
+                f"    VRAM {vram_u or '—'} / {vram_t or '—'} MB  ·  "
+                f"Core {freq_s}  ·  Driver {g.get('driver_version') or '—'}"
             )
         return "\n".join(lines)
 
@@ -677,7 +776,24 @@ def format_human(payload: dict) -> str:
             f"Temps  CPU {_deg(d.get('cpu_c'))}",
         ]
         for g in d.get("gpus") or []:
-            lines.append(f"       GPU {g.get('name') or ''}  {_deg(g.get('temp_c'))}".rstrip())
+            lines.append(
+                f"       GPU {_short_gpu(g.get('name')):28}  {_deg(g.get('temp_c'))}".rstrip()
+            )
+        return "\n".join(lines)
+
+    if r == "fans":
+        fans = d.get("fans") or []
+        if not fans:
+            return "Fans  (none reported — laptop EC often hides RPM)"
+        lines = ["Fans"]
+        for f in fans:
+            label = f.get("label") or f.get("sensor") or "fan"
+            if f.get("rpm") is not None:
+                lines.append(f"  {label:28}  {f.get('rpm')} RPM")
+            elif f.get("percent") is not None:
+                lines.append(f"  {label:28}  {_pct(f.get('percent'))}")
+            else:
+                lines.append(f"  {label}")
         return "\n".join(lines)
 
     if r == "board":
@@ -795,6 +911,7 @@ RESOURCES (short names you type)
   gpu, graphics, nvidia    GPU(s): load, VRAM, temp, power
   ram, memory, mem         Memory / swap
   temp, temps, thermal     CPU + GPU temperatures
+  fans, fan, cooling       Fan RPM / PWM when the EC exposes them
   board, motherboard, mb   System / motherboard / BIOS
   os, system, host         OS, kernel, desktop
   disk, storage, ssd       Disks, partitions, I/O rates
@@ -820,10 +937,17 @@ EXAMPLES
 
 OPTIONS
   --json, -j          Machine-readable JSON
-  --plain, -p         No banner / colors / meters (scripts)
+  --plain, -p         Text only: no banner, colors, meters
   --pci               Include full PCI list (scan only)
   --interval N        Seconds between watch updates (default 1)
-  --no-graph          Watch text only (skip live ASCII graph)
+  --graph             Watch: also show optional line charts
+
+WATCH TIPS
+  si live                       big bar meters (status overview)
+  si live cpu gpu               easy load + temp bars — great for OC
+  si live temps                 temps only, wide bars
+  si graph temps                same as live + opt-in line charts
+  si status --plain             scripts / pipes
 
 API (when UI/server is running on :8787)
   GET /api/status | /api/cpu | /api/gpu | /api/memory | /api/temps
