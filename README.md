@@ -2,17 +2,11 @@
 
 See your PC’s hardware and live stats in the terminal — **CPU, GPU, temps, RAM, disks**, and more.
 
-Works **offline** on Linux. Nothing is sent to the cloud. Great for checking temps while gaming or overclocking, or when you just want a quick system peek.
+Works **offline** on Linux. Nothing is sent anywhere. Great for checking temps, or when you want to check a specific part of your system.
 
 ---
 
-## Do I need to be a developer?
-
-**No.** If you can open a terminal and paste a few commands, you can use this.
-
-You do **not** need to know Python, APIs, or how servers work for the normal tools (`si status`, `si live`, etc.).
-
-You only need a bit of Linux comfort:
+## Quick intro
 
 1. Open a terminal  
 2. Run install once  
