@@ -786,7 +786,7 @@ Also installable as:  si
 
 USAGE
   sysinspect <resource> [resource…] [field…] [options]
-  sysinspect watch <resource> [field…] [--interval 1]
+  sysinspect watch|graph|live <resource> [field…] [--interval 1]
   sysinspect help
 
 RESOURCES (short names you type)
@@ -812,19 +812,18 @@ FIELDS (optional, combine with a resource)
 EXAMPLES
   sysinspect gpu
   sysinspect cpu temp
-  sysinspect gpu temp
-  sysinspect temps
-  sysinspect motherboard
   sysinspect status
-  sysinspect cpu gpu temp
-  sysinspect ram --json
   sysinspect watch gpu
-  sysinspect watch temps --interval 0.5
+  sysinspect graph temps
+  sysinspect live cpu temp --interval 0.5
+  sysinspect ram --json
 
 OPTIONS
   --json, -j          Machine-readable JSON
+  --plain, -p         No banner / colors / meters (scripts)
   --pci               Include full PCI list (scan only)
   --interval N        Seconds between watch updates (default 1)
+  --no-graph          Watch text only (skip live ASCII graph)
 
 API (when UI/server is running on :8787)
   GET /api/status | /api/cpu | /api/gpu | /api/memory | /api/temps
@@ -832,3 +831,4 @@ API (when UI/server is running on :8787)
   GET /api/scan | /api/all | /api/query?q=gpu+temp
   GET /api/help
 """.strip()
+

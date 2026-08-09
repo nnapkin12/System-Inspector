@@ -107,24 +107,26 @@ sysinspect scan
 sysinspect all
 ```
 
-### Live refresh (terminal “monitor”)
+### Live refresh + graphs
 
 ```bash
 sysinspect watch gpu
-sysinspect watch temps
-sysinspect watch cpu --interval 0.5
-sysinspect watch status
+sysinspect graph temps
+sysinspect live cpu temp --interval 0.5
+sysinspect watch status --no-graph   # text meters only
 ```
 
-Stop with **Ctrl+C**.
+Watch mode draws a big **SYSTEM INSPECTOR** header, block meters for %, and a live terminal line graph (`plotext`). Ctrl+C to stop.
 
 ### JSON (for scripts)
 
 ```bash
 sysinspect gpu --json
 sysinspect cpu temp -j
-sysinspect status --json
+sysinspect status --plain --json
 ```
+
+Use `--plain` / `-p` to skip banner/colors (good in pipes).
 
 ### Scan option
 
@@ -140,8 +142,10 @@ sysinspect scan --pci    # include full PCI device list (noisy)
 | Flag | Meaning |
 |------|---------|
 | `--json` / `-j` | Print JSON instead of human text |
+| `--plain` / `-p` | No banner, colors, or meters |
 | `--pci` | With `scan`: include full PCI list |
 | `--interval N` | With `watch`: seconds between updates (default `1`) |
+| `--no-graph` | With `watch`: skip live graph (text only) |
 | `help` / `-h` / `--help` | Show in-terminal help |
 
 ---
