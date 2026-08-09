@@ -1,6 +1,5 @@
 # System Inspector
 
-
 Local hardware scan + live vitals on **Linux** (Windows maybe later).
 
 **Main:** terminal CLI · **Optional:** desktop window or browser UI.
