@@ -28,6 +28,8 @@ CANONICAL = (
     "net",
     "battery",
     "scan",
+    "uptime",
+    "version",
     "all",
 )
 
@@ -56,8 +58,8 @@ ALIASES: dict[str, str] = {
     "mainboard": "board",
     "os": "os",
     "system": "os",
+    # note: "host" = full OS block; use "hostname" field for host name only
     "host": "os",
-    "kernel": "os",
     "disk": "disk",
     "storage": "disk",
     "ssd": "disk",
@@ -77,12 +79,18 @@ ALIASES: dict[str, str] = {
     "inventory": "scan",
     "hw": "scan",
     "hardware": "scan",
+    "uptime": "uptime",
+    "up": "uptime",
+    # bare "version" / "ver" → System Inspector app version (not OS)
+    "version": "version",
+    "ver": "version",
+    "about": "version",
     "all": "all",
     "everything": "all",
     "full": "all",
 }
 
-# Optional field tokens (not resources by themselves when mixed with a resource)
+# Optional field tokens (combine with a resource, or alone for a few shortcuts)
 FIELD_ALIASES: dict[str, str] = {
     "temp": "temp",
     "temps": "temp",
@@ -93,7 +101,20 @@ FIELD_ALIASES: dict[str, str] = {
     "name": "name",
     "model": "name",
     "summary": "summary",
+    # OS detail slices — "si kernel" or "si os kernel" → kernel line only
+    "kernel": "kernel",
+    "hostname": "hostname",
+    "desktop": "desktop",
+    "de": "desktop",
+    "arch": "arch",
+    "architecture": "arch",
+    "distro": "version",  # OS pretty name (with os context)
+    "release": "version",
 }
+
+# Fields that mean "zoom into OS" when typed alone (si kernel → OS kernel line)
+_OS_DETAIL_FIELDS = frozenset({"kernel", "hostname", "desktop", "arch", "version", "name"})
+
 
 
 def _now() -> str:
@@ -107,7 +128,7 @@ def _ok(resource: str, data: Any, **extra: Any) -> dict:
 
 
 def resolve_token(token: str) -> tuple[str | None, str | None]:
-    """Return (resource|None, field|None) for one word."""
+    """Return (resource|None, field|None) for one word (simple cases)."""
     t = token.strip().lower()
     if not t:
         return None, None
@@ -122,19 +143,37 @@ def parse_query(tokens: list[str]) -> tuple[list[str], set[str], list[str]]:
     """
     Parse freeform tokens into (resources, fields, unknown).
 
-    Examples:
-      ['gpu'] → resources=['gpu'], fields={}
-      ['gpu', 'temp'] → ['gpu'], {'temp'}
-      ['cpu', 'gpu', 'temp'] → ['cpu','gpu'], {'temp'}
-      ['temp'] → ['temps'], {}
+    Smart rules (so extra words actually narrow the answer):
+      si kernel           → os + field kernel  (one line)
+      si os version       → os + field version (Pop!_OS only, not full block)
+      si version          → app version (System Inspector 0.x)
+      si temp             → temps resource
     """
+    raw_tokens = [t.strip() for t in tokens if t and t.strip()]
+    lower = [t.lower() for t in raw_tokens]
+
+    # Will "version" mean OS distro name, or this app's version?
+    os_context = any(
+        ALIASES.get(t) == "os" or t in ("os", "system") for t in lower
+    )
+
     resources: list[str] = []
     fields: set[str] = set()
     unknown: list[str] = []
     seen: set[str] = set()
 
-    for raw in tokens:
-        res, field = resolve_token(raw)
+    for t in lower:
+        # Dual meaning: "version"
+        if t in ("version", "ver"):
+            if os_context:
+                fields.add("version")
+            else:
+                if "version" not in seen:
+                    resources.append("version")
+                    seen.add("version")
+            continue
+
+        res, field = resolve_token(t)
         if field:
             fields.add(field)
             continue
@@ -143,14 +182,18 @@ def parse_query(tokens: list[str]) -> tuple[list[str], set[str], list[str]]:
                 resources.append(res)
                 seen.add(res)
             continue
-        unknown.append(raw)
+        unknown.append(t)
 
-    # Bare "temp" with no other resources → temps resource
+    # Bare temp → temps resource
     if not resources and "temp" in fields:
         resources = ["temps"]
         fields.discard("temp")
 
-    # "temp" alone already handled; if only "usage" with nothing → status
+    # Bare kernel / hostname / desktop / … → OS slice
+    if not resources and fields & _OS_DETAIL_FIELDS:
+        resources = ["os"]
+
+    # leftover bare fields (e.g. only "usage") → status overview
     if not resources and fields:
         resources = ["status"]
 
@@ -381,6 +424,47 @@ def resource_os() -> dict:
     return _ok("os", inv.get("summary") or {})
 
 
+def resource_uptime() -> dict:
+    inv = get_inventory(include_pci=False)
+    vit = get_vitals()
+    s = inv.get("summary") or {}
+    secs = s.get("uptime_seconds")
+    if secs is None:
+        # From OS component if present
+        for c in inv.get("components", []):
+            if c.get("category") == "os" and c.get("uptime_seconds") is not None:
+                secs = c.get("uptime_seconds")
+                break
+    if secs is None and vit.get("boot_time"):
+        import time as _time
+
+        try:
+            secs = max(0.0, _time.time() - float(vit["boot_time"]))
+        except (TypeError, ValueError):
+            secs = None
+    return _ok(
+        "uptime",
+        {
+            "uptime_seconds": secs,
+            "human": _fmt_uptime(secs),
+            "boot_time": vit.get("boot_time"),
+        },
+    )
+
+
+def resource_version() -> dict:
+    from backend.version import NAME, VERSION
+
+    return _ok(
+        "version",
+        {
+            "name": NAME,
+            "version": VERSION,
+            "cli": "si · sysinspect",
+        },
+    )
+
+
 def resource_disk() -> dict:
     inv = get_inventory(include_pci=False)
     vit = get_vitals()
@@ -473,6 +557,8 @@ def resource_all() -> dict:
             "net": resource_net()["data"],
             "battery": resource_battery()["data"],
             "fans": resource_fans()["data"],
+            "uptime": resource_uptime()["data"],
+            "version": resource_version()["data"],
         },
     )
 
@@ -490,6 +576,8 @@ HANDLERS: dict[str, Callable[..., dict]] = {
     "net": resource_net,
     "battery": resource_battery,
     "scan": resource_scan,
+    "uptime": resource_uptime,
+    "version": resource_version,
     "all": resource_all,
 }
 
@@ -510,7 +598,7 @@ def get_resource(name: str, **kwargs: Any) -> dict:
 
 
 def apply_fields(payload: dict, fields: set[str]) -> dict:
-    """Narrow a resource payload by field filters (temp, usage, name, summary)."""
+    """Narrow a resource payload by field filters (temp, usage, name, kernel, …)."""
     if not payload.get("ok") or not fields:
         return payload
     resource = payload.get("resource")
@@ -519,24 +607,47 @@ def apply_fields(payload: dict, fields: set[str]) -> dict:
         return payload
 
     filtered: Any = data
+    os_detail = fields & _OS_DETAIL_FIELDS
 
-    if "temp" in fields:
-        filtered = _filter_temp(resource, data)
-    if "usage" in fields:
-        filtered = _filter_usage(resource, filtered if "temp" not in fields else data)
+    # OS slices first (si os version, si kernel, …)
+    if resource == "os" and os_detail and not (fields & {"temp", "usage"}):
+        filtered = _filter_os(data, fields)
+    else:
         if "temp" in fields:
-            # merge both views
-            t = _filter_temp(resource, data)
-            u = _filter_usage(resource, data)
-            filtered = {"temp": t, "usage": u}
-    if "name" in fields and "temp" not in fields and "usage" not in fields:
-        filtered = _filter_name(resource, data)
-    if "summary" in fields and len(fields) == 1:
-        filtered = _filter_summary(resource, data)
+            filtered = _filter_temp(resource, data)
+        if "usage" in fields:
+            filtered = _filter_usage(resource, filtered if "temp" not in fields else data)
+            if "temp" in fields:
+                t = _filter_temp(resource, data)
+                u = _filter_usage(resource, data)
+                filtered = {"temp": t, "usage": u}
+        if "name" in fields and "temp" not in fields and "usage" not in fields and resource != "os":
+            filtered = _filter_name(resource, data)
+        if "name" in fields and resource == "os" and not os_detail - {"name"}:
+            filtered = _filter_os(data, {"name"} | (fields & _OS_DETAIL_FIELDS))
+        if "summary" in fields and len(fields) == 1:
+            filtered = _filter_summary(resource, data)
 
     out = dict(payload)
     out["data"] = filtered
     out["fields"] = sorted(fields)
+    return out
+
+
+def _filter_os(data: dict, fields: set[str]) -> dict:
+    """Pick only requested OS lines (smart slices)."""
+    out: dict[str, Any] = {}
+    if "version" in fields or "name" in fields:
+        out["pretty_name"] = data.get("pretty_name") or data.get("name")
+    if "kernel" in fields:
+        out["kernel"] = data.get("kernel") or data.get("release")
+    if "hostname" in fields:
+        out["hostname"] = data.get("hostname")
+    if "desktop" in fields:
+        out["desktop_environment"] = data.get("desktop_environment")
+        out["session_type"] = data.get("session_type")
+    if "arch" in fields:
+        out["architecture"] = data.get("architecture") or data.get("machine")
     return out
 
 
@@ -807,6 +918,23 @@ def format_human(payload: dict) -> str:
         )
 
     if r == "os":
+        # Filtered one-liners
+        if fields & _OS_DETAIL_FIELDS:
+            lines = []
+            if "version" in fields or "name" in fields:
+                lines.append(f"OS       {d.get('pretty_name') or d.get('name') or '—'}")
+            if "kernel" in fields:
+                lines.append(f"Kernel   {d.get('kernel') or d.get('release') or '—'}")
+            if "hostname" in fields:
+                lines.append(f"Host     {d.get('hostname') or '—'}")
+            if "desktop" in fields:
+                lines.append(
+                    f"Desktop  {d.get('desktop_environment') or '—'}  ·  "
+                    f"{d.get('session_type') or '—'}"
+                )
+            if "arch" in fields:
+                lines.append(f"Arch     {d.get('architecture') or d.get('machine') or '—'}")
+            return "\n".join(lines) if lines else "—"
         return (
             f"OS       {d.get('name') or d.get('pretty_name') or '—'}\n"
             f"Kernel   {d.get('kernel') or d.get('release') or '—'}\n"
@@ -815,6 +943,12 @@ def format_human(payload: dict) -> str:
             f"{d.get('session_type') or '—'}\n"
             f"Arch     {d.get('architecture') or '—'}"
         )
+
+    if r == "uptime":
+        return f"Uptime   {d.get('human') or _fmt_uptime(d.get('uptime_seconds'))}"
+
+    if r == "version":
+        return f"{d.get('name') or 'System Inspector'}  {d.get('version') or '—'}\nCLI      {d.get('cli') or 'si'}"
 
     if r == "disk":
         lines = ["Disk"]
@@ -894,6 +1028,27 @@ def _deg(v: Any) -> str:
         return "—"
 
 
+def _fmt_uptime(secs: Any) -> str:
+    if secs is None:
+        return "—"
+    try:
+        s = int(float(secs))
+    except (TypeError, ValueError):
+        return "—"
+    if s < 0:
+        s = 0
+    days, rem = divmod(s, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, _ = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours or days:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    parts.append(f"{mins} min{'s' if mins != 1 else ''}")
+    return ", ".join(parts)
+
+
 def list_commands_help() -> str:
     return """
 sysinspect — System Inspector CLI
@@ -905,35 +1060,43 @@ USAGE
   sysinspect watch|graph|live <resource> [field…] [--interval 1]
   sysinspect help
 
-RESOURCES (short names you type)
+RESOURCES
   status, summary          Quick host + live overview
   cpu, processor           CPU model, load, freq, temp
   gpu, graphics, nvidia    GPU(s): load, VRAM, temp, power
   ram, memory, mem         Memory / swap
   temp, temps, thermal     CPU + GPU temperatures
-  fans, fan, cooling       Fan RPM / PWM when the EC exposes them
+  fans, fan, cooling       Fan RPM / PWM when reported
   board, motherboard, mb   System / motherboard / BIOS
-  os, system, host         OS, kernel, desktop
+  os, system, host         Full OS block
+  uptime, up               How long the machine has been on
+  version, ver, about      This app's version (System Inspector)
   disk, storage, ssd       Disks, partitions, I/O rates
   net, network, wifi       Interfaces + throughput
   battery, bat             Laptop battery if present
   scan, inventory, hw      Hardware inventory summary
   all, everything          Big combined snapshot
 
-FIELDS (optional, combine with a resource)
-  temp, temperature        Only temperatures
-  usage, util, load        Only utilization
-  name, model              Only names/models
-  summary                  Short scan-style summary
+FIELDS (narrow the answer — e.g. si os version, si kernel)
+  temp, temperature        Temperatures only
+  usage, util, load        Utilization only
+  name, model              Names/models only
+  kernel                   Kernel string only (si kernel)
+  version                  With os: distro name only (si os version)
+  hostname                 Hostname only
+  desktop, de              Desktop session
+  arch                     Architecture
 
 EXAMPLES
-  sysinspect gpu
-  sysinspect cpu temp
-  sysinspect status
-  sysinspect watch gpu
-  sysinspect graph temps
-  sysinspect live cpu temp --interval 0.5
-  sysinspect ram --json
+  si gpu
+  si cpu temp
+  si temps
+  si os version            → Pop!_OS …
+  si kernel                → kernel line only
+  si uptime
+  si version               → System Inspector 0.x
+  si live cpu gpu
+  si status --plain
 
 OPTIONS
   --json, -j          Machine-readable JSON
@@ -941,18 +1104,5 @@ OPTIONS
   --pci               Include full PCI list (scan only)
   --interval N        Seconds between watch updates (default 1)
   --graph             Watch: also show optional line charts
-
-WATCH TIPS
-  si live                       big bar meters (status overview)
-  si live cpu gpu               easy load + temp bars — great for OC
-  si live temps                 temps only, wide bars
-  si graph temps                same as live + opt-in line charts
-  si status --plain             scripts / pipes
-
-API (when UI/server is running on :8787)
-  GET /api/status | /api/cpu | /api/gpu | /api/memory | /api/temps
-  GET /api/board | /api/os | /api/disk | /api/net | /api/battery
-  GET /api/scan | /api/all | /api/query?q=gpu+temp
-  GET /api/help
 """.strip()
 

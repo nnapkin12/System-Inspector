@@ -35,7 +35,7 @@ FRONTEND = ROOT / "frontend"
 app = FastAPI(
     title="SystemInspector",
     description="Local-only hardware inventory and live vitals (no cloud, no paid APIs).",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 

@@ -1,14 +1,28 @@
 # System Inspector
 
-Local hardware scan + live vitals on **Linux** (Windows maybe later).
+See your PC’s hardware and live stats in the terminal — **CPU, GPU, temps, RAM, disks**, and more.
 
-**Main:** terminal CLI · **Optional:** desktop window or browser UI.
+Works **offline** on Linux. Nothing is sent to the cloud. Great for checking temps while gaming or overclocking, or when you just want a quick system peek.
 
 ---
 
-## Terminal (main)
+## Do I need to be a developer?
 
-After install, use from **any** terminal with: 'si', 'systeminspect','sysinspect'. No window/server required.
+**No.** If you can open a terminal and paste a few commands, you can use this.
+
+You do **not** need to know Python, APIs, or how servers work for the normal tools (`si status`, `si live`, etc.).
+
+You only need a bit of Linux comfort:
+
+1. Open a terminal  
+2. Run install once  
+3. Type short commands like `si temps`
+
+---
+
+## Install (once)
+
+Open a terminal and paste:
 
 ```bash
 git clone https://github.com/nnapkin12/System-Inspector.git
@@ -16,42 +30,55 @@ cd System-Inspector
 ./install.sh
 ```
 
-If `sysinspect` is not found:
+That installs two commands you can use **any time, from any folder**:
+
+| Type this | Same tool |
+|-----------|-----------|
+| `si` | short name (easiest) |
+| `sysinspect` | longer name |
+
+### If it says “command not found”
+
+Paste this once, then open a **new** terminal:
 
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+### CLI only (no desktop menu icon)
+
 ```bash
-si status
-si gpu
-si cpu temp
-si motherboard
-si watch gpu
-si help
+./install.sh --cli-only
 ```
-
-**All commands → [COMMANDS.md](COMMANDS.md)**
-
-CLI only (skip app menu): `./install.sh --cli-only`
 
 ---
 
-## Window / browser (optional)
-
-This displays the same data, but with UI (scan cards + live graphs).
+## First things to try
 
 ```bash
-# window
-./SystemInspector
-
-# browser (leave terminal open)
-./run.sh
-# → http://127.0.0.1:8787
+si status          # quick overview
+si gpu             # graphics cards
+si cpu             # processor
+si temps           # temperatures
+si live cpu gpu    # live bars (Ctrl+C to stop)
+si help            # reminder inside the terminal
 ```
 
-If the window falls back to a browser (on Ubuntu):
+**Full list of commands:** [COMMANDS.md](COMMANDS.md)
+
+---
+
+## Optional window / browser
+
+Same data with a clickable window (not required for `si`):
+
+```bash
+./SystemInspector     # desktop window
+./run.sh              # browser at http://127.0.0.1:8787
+```
+
+If the window opens in a browser instead of a real app, Ubuntu/Pop may need:
 
 ```bash
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
@@ -69,4 +96,4 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 
 ---
 
-Local only · no cloud · **MIT** ([LICENSE](LICENSE))
+Local only · no accounts · **MIT** ([LICENSE](LICENSE))
