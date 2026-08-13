@@ -1,4 +1,10 @@
-# System Inspector
+#  ░██████                  ░██████
+# ░██   ░██                   ░██
+#░██                          ░██
+# ░████████                   ░██
+#        ░██                  ░██
+# ░██   ░██                   ░██
+#  ░██████  SYSTEM          ░██████ INSPECT
 
 A terminal utility to monitor temperatures, loads, disks, network activity, and check hardware specs.
 
