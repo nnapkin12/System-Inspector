@@ -6,50 +6,88 @@ from pathlib import Path
 from .util import read_text, run_cmd, safe_dict
 
 
-def collect_gpus_inventory() -> list[dict]:
-    """Discover GPUs without hardcoding a specific card."""
-    gpus: list[dict] = []
-    pci_ids_seen: set[str] = set()
-    vendors_from_nvml: set[str] = set()
+def normalize_pci_bdf(s: str | None) -> str | None:
+    """Canonical PCI BDF: 01:00.0 and 00000000:01:00.0 → 0000:01:00.0."""
+    if not s:
+        return None
+    text = str(s).strip().lower()
+    m = re.fullmatch(
+        r"(?:([0-9a-f]+):)?([0-9a-f]{1,2}):([0-9a-f]{1,2})\.([0-9a-f]+)",
+        text,
+    )
+    if not m:
+        return text or None
+    domain, bus, dev, fn = m.groups()
+    if domain is None:
+        domain = "0000"
+    else:
+        domain = domain[-4:].zfill(4)
+    return f"{domain}:{bus.zfill(2)}:{dev.zfill(2)}.{fn}"
 
-    for gpu in _from_nvidia_nvml():
-        gpus.append(gpu)
-        vendors_from_nvml.add("nvidia")
-        if gpu.get("pci_id"):
-            pci_ids_seen.add(gpu["pci_id"].lower())
 
-    for gpu in _from_lspci():
+def merge_gpu_inventory(nvml: list[dict], lspci: list[dict]) -> list[dict]:
+    """Join NVML inventory with lspci rows, matching NVIDIA cards by PCI BDF."""
+    gpus = [dict(g) for g in nvml]
+    has_nvml_nvidia = any((g.get("vendor") or "").lower() == "nvidia" for g in gpus)
+    seen_bdf = {
+        bdf
+        for g in gpus
+        if (bdf := normalize_pci_bdf(g.get("pci_bus_id") or g.get("pci_slot")))
+    }
+    seen_pci_id = {(g.get("pci_id") or "").lower() for g in gpus if g.get("pci_id")}
+
+    for gpu in lspci:
         pci_id = (gpu.get("pci_id") or "").lower()
         vendor = (gpu.get("vendor") or "").lower()
-        # NVML already gave a clean NVIDIA name; keep lspci marketing string as note on existing
-        if vendor == "nvidia" and "nvidia" in vendors_from_nvml:
-            if pci_id:
-                pci_ids_seen.add(pci_id)
-            # Attach lspci name onto first NVIDIA entry if useful
-            for existing in gpus:
-                if (existing.get("vendor") or "").lower() == "nvidia" and not existing.get(
-                    "pci_name"
-                ):
-                    existing["pci_name"] = gpu.get("name")
-                    if gpu.get("pci_slot"):
-                        existing["pci_slot"] = gpu.get("pci_slot")
-                    if pci_id:
-                        existing["pci_id"] = pci_id
-                    break
-            continue
-        if pci_id and pci_id in pci_ids_seen:
-            continue
-        if pci_id:
-            pci_ids_seen.add(pci_id)
-        gpus.append(gpu)
+        slot = normalize_pci_bdf(gpu.get("pci_slot"))
 
-    # DRM only when we still lack a vendor GPU (rare)
+        if vendor == "nvidia" and has_nvml_nvidia:
+            attached = False
+            if slot:
+                for existing in gpus:
+                    exist_slot = normalize_pci_bdf(
+                        existing.get("pci_bus_id") or existing.get("pci_slot")
+                    )
+                    if exist_slot == slot:
+                        if not existing.get("pci_name"):
+                            existing["pci_name"] = gpu.get("name")
+                        existing["pci_slot"] = gpu.get("pci_slot")
+                        if pci_id:
+                            existing["pci_id"] = pci_id
+                        attached = True
+                        break
+            if attached:
+                if slot:
+                    seen_bdf.add(slot)
+                if pci_id:
+                    seen_pci_id.add(pci_id)
+                continue
+            if slot and slot in seen_bdf:
+                continue
+            gpus.append(gpu)
+            if slot:
+                seen_bdf.add(slot)
+            if pci_id:
+                seen_pci_id.add(pci_id)
+            continue
+
+        if slot and slot in seen_bdf:
+            continue
+        if not slot and pci_id and pci_id in seen_pci_id:
+            continue
+        gpus.append(gpu)
+        if slot:
+            seen_bdf.add(slot)
+        if pci_id:
+            seen_pci_id.add(pci_id)
+    return gpus
+
+
+def collect_gpus_inventory() -> list[dict]:
+    """Discover GPUs without hardcoding a specific card."""
+    gpus = merge_gpu_inventory(_from_nvidia_nvml(), _from_lspci())
     if not gpus:
         gpus.extend(_from_drm())
-    else:
-        # Prefer not listing raw card0 when lspci/NVML already covered display GPUs
-        pass
-
     return gpus or [
         safe_dict(
             category="gpu",
@@ -219,12 +257,18 @@ def _nvidia_vitals() -> list[dict]:
                 fan = pynvml.nvmlDeviceGetFanSpeed(handle)
             except Exception:
                 pass
+            pci_bus = None
+            try:
+                pci_bus = _nvml_str(pynvml.nvmlDeviceGetPciInfo(handle).busId)
+            except Exception:
+                pass
 
             out.append(
                 safe_dict(
                     vendor="NVIDIA",
                     name=name,
                     index=i,
+                    pci_bus_id=pci_bus,
                     usage_percent=util.gpu if util else None,
                     memory_usage_percent=util.memory if util else None,
                     vram_used_bytes=mem.used if mem else None,

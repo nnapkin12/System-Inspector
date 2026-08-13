@@ -112,46 +112,9 @@ def _throughput() -> dict:
 
 
 def collect_fans() -> list[dict]:
-    """
-    Fan sensors. Many laptops (including HP ACPI) expose fan nodes that
-    permanently read 0 — those are filtered. Prefer real non-zero RPM or duty %.
-    """
+    """Fan sensors from hwmon / psutil. GPU fan % comes from vitals gpus list."""
     fans: list[dict] = []
 
-    # NVIDIA GPU fan % when supported (often not on laptop GPUs)
-    try:
-        import pynvml
-
-        pynvml.nvmlInit()
-        try:
-            count = pynvml.nvmlDeviceGetCount()
-            for i in range(count):
-                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                name = pynvml.nvmlDeviceGetName(handle)
-                if isinstance(name, bytes):
-                    name = name.decode("utf-8", errors="replace")
-                try:
-                    pct = pynvml.nvmlDeviceGetFanSpeed(handle)
-                    fans.append(
-                        safe_dict(
-                            sensor="nvml",
-                            label=f"{name} fan",
-                            percent=int(pct),
-                            unit="percent",
-                            source="nvml",
-                        )
-                    )
-                except Exception:
-                    pass
-        finally:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # hwmon fan*_input (RPM) and pwm* (duty 0–255)
     hwmon = Path("/sys/class/hwmon")
     if hwmon.is_dir():
         for card in sorted(hwmon.glob("hwmon*")):
@@ -221,6 +184,25 @@ def collect_fans() -> list[dict]:
     return fans
 
 
+def _gpu_fans(gpus: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for g in gpus:
+        pct = g.get("fan_percent")
+        if pct is None:
+            continue
+        name = g.get("name") or "GPU"
+        out.append(
+            safe_dict(
+                sensor=g.get("source") or "gpu",
+                label=f"{name} fan",
+                percent=int(pct),
+                unit="percent",
+                source=g.get("source") or "nvml",
+            )
+        )
+    return out
+
+
 def get_vitals() -> dict:
     """Live metrics for the dashboard (poll ~1s)."""
     battery = None
@@ -233,7 +215,8 @@ def get_vitals() -> dict:
                 secs_left=bat.secsleft if bat.secsleft and bat.secsleft >= 0 else None,
             )
 
-    fans = collect_fans()
+    gpus = collect_gpus_vitals()
+    fans = _gpu_fans(gpus) + collect_fans()
 
     all_temps = []
     try:
@@ -250,7 +233,6 @@ def get_vitals() -> dict:
         pass
 
     rates = _throughput()
-    # Absolute counters so the UI can also compute rates client-side (more reliable across restarts)
     dr, dw = _disk_counters()
     nr, ns = _net_counters()
 
@@ -258,7 +240,7 @@ def get_vitals() -> dict:
         "collected_at": datetime.now(timezone.utc).isoformat(),
         "cpu": collect_cpu_vitals(),
         "memory": collect_memory_vitals(),
-        "gpus": collect_gpus_vitals(),
+        "gpus": gpus,
         "storage": collect_storage_vitals(),
         "network": collect_network_vitals(),
         "rates": {

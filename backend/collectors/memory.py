@@ -61,9 +61,7 @@ def collect_memory_vitals() -> dict:
 
 
 def _dmi_memory_modules() -> list[dict]:
-    """Best-effort DIMM info from DMI (no root required on most distros)."""
-    base = Path("/sys/firmware/dmi/entries")
-    # Prefer dmidecode only if readable; often needs root — skip if not.
+    """Best-effort DIMM info from DMI (often needs root for dmidecode)."""
     from .util import run_cmd
 
     raw = run_cmd(["dmidecode", "-t", "memory"])

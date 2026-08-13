@@ -24,9 +24,9 @@ def collect_board() -> list[dict]:
             vendor=vendor,
             product=product,
             version=version,
-            serial=_redact_serial(serial),
+            serial=serial,
             sku=sku,
-            uuid=_redact_serial(uuid),
+            uuid=uuid,
             family=_dmi("product_family"),
             source="dmi",
         )
@@ -41,7 +41,7 @@ def collect_board() -> list[dict]:
             vendor=board_vendor,
             product=board_name,
             version=_dmi("board_version"),
-            serial=_redact_serial(_dmi("board_serial")),
+            serial=_dmi("board_serial"),
             asset_tag=_dmi("board_asset_tag"),
             source="dmi",
         )
@@ -68,7 +68,7 @@ def collect_board() -> list[dict]:
             name=_dmi("chassis_version") or "Chassis",
             vendor=_dmi("chassis_vendor"),
             type=chassis,
-            serial=_redact_serial(_dmi("chassis_serial")),
+            serial=_dmi("chassis_serial"),
             source="dmi",
         )
     )
@@ -85,13 +85,6 @@ def _dmi(field: str) -> str | None:
     value = read_text(DMI / field)
     if not value or value == "Default string" or value == "None":
         return None
-    return value
-
-
-def _redact_serial(value: str | None) -> str | None:
-    """Keep presence of serial without fully exposing it in UI JSON dumps optionally.
-    For a local diagnostic tool we still show it; user can remove later.
-    """
     return value
 
 

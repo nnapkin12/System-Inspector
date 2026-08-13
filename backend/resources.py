@@ -1,5 +1,5 @@
 """
-Sliceable resources shared by the HTTP API and the CLI.
+Query layer: token parsing, resource payloads, field filters.
 
 Users remember short names (gpu, cpu, temps). Combinations like
 ``gpu temp`` select a resource + field filters — no one-route-per-phrase.
@@ -7,12 +7,15 @@ Users remember short names (gpu, cpu, temps). Combinations like
 
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from backend.collectors import get_inventory, get_vitals
-from backend.collectors.gpu import short_gpu_name as _short_gpu
+from backend.collectors import get_inventory
+from backend.fields import NET_DETAIL_FIELDS, NET_FIELD_ALIASES, OS_DETAIL_FIELDS
+from backend.snapshot import Snapshot
+from backend.collectors.gpu import normalize_pci_bdf, short_gpu_name as _short_gpu
 
 # Canonical resource → display name
 CANONICAL = (
@@ -67,7 +70,6 @@ ALIASES: dict[str, str] = {
     "drive": "disk",
     "net": "net",
     "network": "net",
-    "wifi": "net",
     "eth": "net",
     "battery": "battery",
     "bat": "battery",
@@ -112,17 +114,13 @@ FIELD_ALIASES: dict[str, str] = {
     "release": "version",
 }
 
-# Fields that mean "zoom into OS" when typed alone (si kernel → OS kernel line)
-_OS_DETAIL_FIELDS = frozenset({"kernel", "hostname", "desktop", "arch", "version", "name"})
-
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _ok(resource: str, data: Any, **extra: Any) -> dict:
-    out = {"ok": True, "at": _now(), "resource": resource, "data": data}
+    # Deep copy so Snapshot-cached dicts can't be mutated by format/TUI paths.
+    out = {"ok": True, "at": _now(), "resource": resource, "data": copy.deepcopy(data)}
     out.update(extra)
     return out
 
@@ -173,6 +171,13 @@ def parse_query(tokens: list[str]) -> tuple[list[str], set[str], list[str]]:
                     seen.add("version")
             continue
 
+        if t in NET_FIELD_ALIASES:
+            fields.add(NET_FIELD_ALIASES[t])
+            if "net" not in seen:
+                resources.append("net")
+                seen.add("net")
+            continue
+
         res, field = resolve_token(t)
         if field:
             fields.add(field)
@@ -190,7 +195,7 @@ def parse_query(tokens: list[str]) -> tuple[list[str], set[str], list[str]]:
         fields.discard("temp")
 
     # Bare kernel / hostname / desktop / … → OS slice
-    if not resources and fields & _OS_DETAIL_FIELDS:
+    if not resources and fields & OS_DETAIL_FIELDS:
         resources = ["os"]
 
     # leftover bare fields (e.g. only "usage") → status overview
@@ -202,17 +207,29 @@ def parse_query(tokens: list[str]) -> tuple[list[str], set[str], list[str]]:
 
 # ---------- resource builders ----------
 
+_NVIDIA_MARKERS = ("nvidia", "geforce", "rtx", "quadro", "tesla")
 
-def resource_status() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
+
+def _is_nvidia_gpu(vendor: str | None, name: str | None) -> bool:
+    hay = f"{vendor or ''} {name or ''}".lower()
+    return any(m in hay for m in _NVIDIA_MARKERS)
+
+
+def _text_has_nvidia(text: str) -> bool:
+    hay = text.lower()
+    return any(m in hay for m in _NVIDIA_MARKERS)
+
+
+def resource_status(snap: Snapshot) -> dict:
+    inv = snap.inventory()
+    vit = snap.vitals()
     s = inv.get("summary") or {}
     cpu = vit.get("cpu") or {}
     ram = (vit.get("memory") or {}).get("ram") or {}
     gpus = vit.get("gpus") or []
     # Prefer discrete NVIDIA for the summary "GPU" slots when multi-GPU
     g0 = next(
-        (g for g in gpus if "nvidia" in (g.get("vendor") or "").lower() or "geforce" in (g.get("name") or "").lower()),
+        (g for g in gpus if _is_nvidia_gpu(g.get("vendor"), g.get("name"))),
         None,
     )
     if g0 is None:
@@ -220,6 +237,25 @@ def resource_status() -> dict:
     # secondary for a second temperature if available
     others = [g for g in gpus if g is not g0]
     g1 = others[0] if others else {}
+    # Inventory-only NVIDIA (no NVML) still shows up in summary gpus names
+    gpu_note = None
+    inv_gpu_names = " ".join(str(x) for x in (s.get("gpus") or [])).lower()
+    has_nvidia_inv = _text_has_nvidia(inv_gpu_names)
+    has_nvidia_live = any(_is_nvidia_gpu(g.get("vendor"), g.get("name")) for g in gpus)
+    if has_nvidia_inv and not has_nvidia_live:
+        gpu_note = "NVIDIA · driver/NVML unavailable"
+    elif g0:
+        gpu_note = gpu_sensor_note(
+            {
+                "vendor": g0.get("vendor"),
+                "source": g0.get("source"),
+                "usage_percent": g0.get("usage_percent"),
+                "temp_c": g0.get("temperature_c"),
+                "vram_total_mb": g0.get("vram_total_mb"),
+            }
+        )
+    elif s.get("gpus"):
+        gpu_note = "GPU listed · no live sensors yet"
     return _ok(
         "status",
         {
@@ -235,14 +271,15 @@ def resource_status() -> dict:
                 "gpu_percent": g0.get("usage_percent"),
                 "gpu_temp_c": g0.get("temperature_c") if g0.get("temperature_c") is not None else g1.get("temperature_c"),
                 "ram_percent": ram.get("percent"),
+                "gpu_note": gpu_note,
             },
         },
     )
 
 
-def resource_cpu() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
+def resource_cpu(snap: Snapshot) -> dict:
+    inv = snap.inventory()
+    vit = snap.vitals()
     cpu_inv = next((c for c in inv.get("components", []) if c.get("category") == "cpu"), {})
     cpu = vit.get("cpu") or {}
     return _ok(
@@ -262,129 +299,237 @@ def resource_cpu() -> dict:
     )
 
 
-def resource_gpu() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
-    inv_gpus = [c for c in inv.get("components", []) if c.get("category") == "gpu"]
-    live = list(vit.get("gpus") or [])
-    used_live: set[int] = set()
+def gpu_sensor_note(g: dict) -> str | None:
+    """Human reason when a GPU is visible but stats are missing — not just '—'."""
+    usage = g.get("usage_percent")
+    temp = g.get("temp_c")
+    if temp is None:
+        temp = g.get("temperature_c")
+    vram = g.get("vram_total_mb")
+    source = (g.get("source") or "").lower()
+    vendor = (g.get("vendor") or "").lower()
+    has_any = usage is not None or temp is not None or vram is not None
+    if has_any and usage is not None:
+        return None
+    if source == "lspci" or (not has_any and "nvidia" in vendor):
+        if "nvidia" in vendor:
+            return "PCI only · NVIDIA driver/NVML unavailable"
+        return "PCI only · no live sensors"
+    if source == "hwmon" and usage is None:
+        if temp is not None:
+            return "temp via hwmon · load not reported"
+        return "hwmon · limited sensors"
+    if not has_any:
+        return "no live sensors"
+    if usage is None and temp is not None:
+        return "load not reported"
+    return None
 
-    def _match_live(g: dict) -> dict:
-        g_vendor = (g.get("vendor") or "").lower()
-        g_name = (g.get("name") or "").lower()
-        # 1) vendor + name token
-        for i, lg in enumerate(live):
-            if i in used_live:
-                continue
-            lv = (lg.get("vendor") or "").lower()
-            ln = (lg.get("name") or "").lower()
-            if g_vendor and lv:
-                if g_vendor in lv or lv in g_vendor or (
-                    "nvidia" in g_vendor and "nvidia" in (lv + ln)
-                ) or (
-                    "amd" in g_vendor and ("amd" in lv or "radeon" in lv or "amd" in ln)
-                ) or (
-                    "intel" in g_vendor and ("intel" in lv or "i915" in lv)
-                ):
-                    # Prefer NVIDIA live for NVIDIA inventory, etc.
-                    if ("nvidia" in g_vendor and "nvidia" not in lv and "nvidia" not in ln
-                            and "nv" not in ln):
-                        continue
-                    used_live.add(i)
-                    return lg
-        # 2) substring name match
-        for i, lg in enumerate(live):
-            if i in used_live:
-                continue
-            ln = (lg.get("name") or "").lower()
-            if ln and (ln in g_name or g_name in ln or any(
-                tok in ln for tok in re.findall(r"[a-z0-9]{4,}", g_name) if len(tok) > 4
-            )):
-                used_live.add(i)
-                return lg
-        return {}
 
-    devices = []
-    for g in inv_gpus:
-        live_g = _match_live(g)
-        short = _short_gpu(g.get("name") or live_g.get("name"))
-        devices.append(
-            {
-                "name": short,
-                "full_name": g.get("pci_name") or g.get("name") or live_g.get("name"),
-                "vendor": g.get("vendor") or live_g.get("vendor"),
-                "driver_version": g.get("driver_version") or live_g.get("driver_version"),
-                "vram_total_mb": g.get("vram_total_mb") or live_g.get("vram_total_mb"),
-                "vram_used_mb": live_g.get("vram_used_mb"),
-                "usage_percent": live_g.get("usage_percent"),
-                "temp_c": live_g.get("temperature_c"),
-                "power_watts": live_g.get("power_watts"),
-                "power_limit_watts": live_g.get("power_limit_watts"),
-                "graphics_mhz": live_g.get("graphics_mhz"),
-                "mem_mhz": live_g.get("mem_mhz"),
-                "fan_percent": live_g.get("fan_percent"),
-                "pci_id": g.get("pci_id"),
-                "source": live_g.get("source") or g.get("source"),
-            }
-        )
+def _pci_dev_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    m = re.search(r"([0-9a-f]{4}:[0-9a-f]{4})", str(value).lower())
+    return m.group(1) if m else None
 
-    # Unmatched live sensors (e.g. dGPU when inventory missed NVML name)
+
+def _inv_gpu_keys(g: dict) -> set[str]:
+    keys: set[str] = set()
+    if g.get("index") is not None:
+        keys.add(f"idx:{g['index']}")
+    slot = normalize_pci_bdf(g.get("pci_slot") or g.get("pci_bus_id"))
+    if slot:
+        keys.add(f"bdf:{slot}")
+    dev_id = _pci_dev_id(g.get("pci_id"))
+    if dev_id:
+        keys.add(f"dev:{dev_id}")
+    return keys
+
+
+def _live_gpu_keys(lg: dict) -> set[str]:
+    keys: set[str] = set()
+    if lg.get("index") is not None:
+        keys.add(f"idx:{lg['index']}")
+    slot = normalize_pci_bdf(lg.get("pci_bus_id") or lg.get("pci_slot"))
+    if slot:
+        keys.add(f"bdf:{slot}")
+    dev_id = _pci_dev_id(lg.get("pci_id"))
+    if dev_id:
+        keys.add(f"dev:{dev_id}")
+    return keys
+
+
+def _match_live_by_id(g: dict, live: list[dict], used_live: set[int]) -> dict | None:
+    want = _inv_gpu_keys(g)
+    if not want:
+        return None
     for i, lg in enumerate(live):
         if i in used_live:
             continue
-        devices.append(
-            {
-                "name": _short_gpu(lg.get("name")),
-                "full_name": lg.get("name"),
-                "vendor": lg.get("vendor"),
-                "vram_total_mb": lg.get("vram_total_mb"),
-                "vram_used_mb": lg.get("vram_used_mb"),
-                "usage_percent": lg.get("usage_percent"),
-                "temp_c": lg.get("temperature_c"),
-                "power_watts": lg.get("power_watts"),
-                "power_limit_watts": lg.get("power_limit_watts"),
-                "graphics_mhz": lg.get("graphics_mhz"),
-                "mem_mhz": lg.get("mem_mhz"),
-                "fan_percent": lg.get("fan_percent"),
-                "source": lg.get("source"),
-            }
-        )
+        overlap = want & _live_gpu_keys(lg)
+        if not overlap:
+            continue
+        if any(k.startswith("bdf:") for k in overlap):
+            used_live.add(i)
+            return lg
+        if g.get("index") is not None and f"idx:{g.get('index')}" in overlap:
+            used_live.add(i)
+            return lg
+        if any(k.startswith("idx:") for k in overlap):
+            used_live.add(i)
+            return lg
+    return None
+
+
+def _match_live_by_name(g: dict, live: list[dict], used_live: set[int]) -> dict:
+    g_vendor = (g.get("vendor") or "").lower()
+    g_name = (g.get("name") or "").lower()
+    for i, lg in enumerate(live):
+        if i in used_live:
+            continue
+        lv = (lg.get("vendor") or "").lower()
+        ln = (lg.get("name") or "").lower()
+        if g_vendor and lv:
+            if g_vendor in lv or lv in g_vendor or (
+                "nvidia" in g_vendor and "nvidia" in (lv + ln)
+            ) or (
+                "amd" in g_vendor and ("amd" in lv or "radeon" in lv or "amd" in ln)
+            ) or (
+                "intel" in g_vendor and ("intel" in lv or "i915" in lv)
+            ):
+                if (
+                    "nvidia" in g_vendor
+                    and "nvidia" not in lv
+                    and "nvidia" not in ln
+                    and "nv" not in ln
+                ):
+                    continue
+                used_live.add(i)
+                return lg
+    for i, lg in enumerate(live):
+        if i in used_live:
+            continue
+        ln = (lg.get("name") or "").lower()
+        if ln and (
+            ln in g_name
+            or g_name in ln
+            or any(tok in ln for tok in re.findall(r"[a-z0-9]{4,}", g_name) if len(tok) > 4)
+        ):
+            used_live.add(i)
+            return lg
+    return {}
+
+
+def _device_from_pair(g: dict, live_g: dict) -> dict:
+    device = {
+        "name": _short_gpu(g.get("name") or live_g.get("name")),
+        "full_name": g.get("pci_name") or g.get("name") or live_g.get("name"),
+        "vendor": g.get("vendor") or live_g.get("vendor"),
+        "driver_version": g.get("driver_version") or live_g.get("driver_version"),
+        "vram_total_mb": g.get("vram_total_mb") or live_g.get("vram_total_mb"),
+        "vram_used_mb": live_g.get("vram_used_mb"),
+        "usage_percent": live_g.get("usage_percent"),
+        "temp_c": live_g.get("temperature_c"),
+        "power_watts": live_g.get("power_watts"),
+        "power_limit_watts": live_g.get("power_limit_watts"),
+        "graphics_mhz": live_g.get("graphics_mhz"),
+        "mem_mhz": live_g.get("mem_mhz"),
+        "fan_percent": live_g.get("fan_percent"),
+        "pci_id": g.get("pci_id"),
+        "pci_slot": g.get("pci_slot"),
+        "source": live_g.get("source") or g.get("source"),
+    }
+    device["note"] = gpu_sensor_note(device)
+    return device
+
+
+def _device_from_live_only(lg: dict) -> dict:
+    device = {
+        "name": _short_gpu(lg.get("name")),
+        "full_name": lg.get("name"),
+        "vendor": lg.get("vendor"),
+        "vram_total_mb": lg.get("vram_total_mb"),
+        "vram_used_mb": lg.get("vram_used_mb"),
+        "usage_percent": lg.get("usage_percent"),
+        "temp_c": lg.get("temperature_c"),
+        "power_watts": lg.get("power_watts"),
+        "power_limit_watts": lg.get("power_limit_watts"),
+        "graphics_mhz": lg.get("graphics_mhz"),
+        "mem_mhz": lg.get("mem_mhz"),
+        "fan_percent": lg.get("fan_percent"),
+        "source": lg.get("source"),
+    }
+    device["note"] = gpu_sensor_note(device)
+    return device
+
+
+def merge_gpu_devices(inv: dict, vit: dict) -> list[dict]:
+    """Join static GPU inventory with live sensor readings."""
+    inv_gpus = [c for c in inv.get("components", []) if c.get("category") == "gpu"]
+    live = list(vit.get("gpus") or [])
+    used_live: set[int] = set()
+    devices: list[dict] = []
+
+    for g in inv_gpus:
+        live_g = _match_live_by_id(g, live, used_live)
+        if live_g is None:
+            live_g = _match_live_by_name(g, live, used_live)
+        devices.append(_device_from_pair(g, live_g or {}))
+
+    for i, lg in enumerate(live):
+        if i in used_live:
+            continue
+        devices.append(_device_from_live_only(lg))
+
     if not devices and live:
-        for lg in live:
-            devices.append(
-                {
-                    "name": _short_gpu(lg.get("name")),
-                    "vendor": lg.get("vendor"),
-                    "vram_total_mb": lg.get("vram_total_mb"),
-                    "vram_used_mb": lg.get("vram_used_mb"),
-                    "usage_percent": lg.get("usage_percent"),
-                    "temp_c": lg.get("temperature_c"),
-                    "power_watts": lg.get("power_watts"),
-                    "source": lg.get("source"),
-                }
-            )
+        devices = [_device_from_live_only(lg) for lg in live]
+    return devices
+
+
+def resource_gpu(snap: Snapshot) -> dict:
+    inv = snap.inventory()
+    vit = snap.vitals()
+    devices = merge_gpu_devices(inv, vit)
     return _ok("gpu", {"count": len(devices), "devices": devices})
 
 
-def resource_memory() -> dict:
-    vit = get_vitals()
+def resource_memory(snap: Snapshot) -> dict:
+    vit = snap.vitals()
     mem = vit.get("memory") or {}
     return _ok("memory", mem)
 
 
-def resource_temps() -> dict:
-    vit = get_vitals()
+def resource_temps(snap: Snapshot) -> dict:
+    vit = snap.vitals()
     cpu = vit.get("cpu") or {}
-    gpus = vit.get("gpus") or []
-    # Prefer resource_gpu matching when inventory is available — still use short names here
-    matched = resource_gpu()["data"].get("devices") or []
+    devices = merge_gpu_devices(snap.inventory(), vit)
     gpu_temps = [
-        {"name": g.get("name"), "temp_c": g.get("temp_c")}
-        for g in matched
+        {
+            "name": g.get("name"),
+            "temp_c": g.get("temp_c"),
+            "note": g.get("note") if g.get("temp_c") is None else None,
+        }
+        for g in devices
     ]
     if not gpu_temps:
+        gpus = vit.get("gpus") or []
         gpu_temps = [
-            {"name": _short_gpu(g.get("name")), "temp_c": g.get("temperature_c")} for g in gpus
+            {
+                "name": _short_gpu(g.get("name")),
+                "temp_c": g.get("temperature_c"),
+                "note": gpu_sensor_note(
+                    {
+                        "vendor": g.get("vendor"),
+                        "source": g.get("source"),
+                        "usage_percent": g.get("usage_percent"),
+                        "temp_c": g.get("temperature_c"),
+                        "vram_total_mb": g.get("vram_total_mb"),
+                    }
+                )
+                if g.get("temperature_c") is None
+                else None,
+            }
+            for g in gpus
         ]
     return _ok(
         "temps",
@@ -397,8 +542,8 @@ def resource_temps() -> dict:
     )
 
 
-def resource_board() -> dict:
-    inv = get_inventory(include_pci=False)
+def resource_board(snap: Snapshot) -> dict:
+    inv = snap.inventory()
     items = [
         c
         for c in inv.get("components", [])
@@ -416,17 +561,19 @@ def resource_board() -> dict:
     )
 
 
-def resource_os() -> dict:
-    inv = get_inventory(include_pci=False)
+def resource_os(snap: Snapshot) -> dict:
+    inv = snap.inventory()
     for c in inv.get("components", []):
         if c.get("category") == "os":
             return _ok("os", c)
     return _ok("os", inv.get("summary") or {})
 
 
-def resource_uptime() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
+def resource_uptime(snap: Snapshot) -> dict:
+    from backend.format import fmt_uptime as __fmt_uptime
+
+    inv = snap.inventory()
+    vit = snap.vitals()
     s = inv.get("summary") or {}
     secs = s.get("uptime_seconds")
     if secs is None:
@@ -446,13 +593,13 @@ def resource_uptime() -> dict:
         "uptime",
         {
             "uptime_seconds": secs,
-            "human": _fmt_uptime(secs),
+            "human": __fmt_uptime(secs),
             "boot_time": vit.get("boot_time"),
         },
     )
 
 
-def resource_version() -> dict:
+def resource_version(_snap: Snapshot) -> dict:
     from backend.version import NAME, VERSION
 
     return _ok(
@@ -465,9 +612,9 @@ def resource_version() -> dict:
     )
 
 
-def resource_disk() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
+def resource_disk(snap: Snapshot) -> dict:
+    inv = snap.inventory()
+    vit = snap.vitals()
     disks = [c for c in inv.get("components", []) if c.get("category") == "disk"]
     parts = [c for c in inv.get("components", []) if c.get("category") == "partition"]
     storage = vit.get("storage") or {}
@@ -486,38 +633,43 @@ def resource_disk() -> dict:
     )
 
 
-def resource_net() -> dict:
-    inv = get_inventory(include_pci=False)
-    vit = get_vitals()
+def resource_net(snap: Snapshot, include_public: bool = False) -> dict:
+    from backend.collectors.network import collect_dns, collect_gateway, collect_ip_addresses
+
+    inv = snap.inventory()
+    vit = snap.vitals()
     nets = [
         c
         for c in inv.get("components", [])
         if c.get("category") in ("network", "network_controller")
     ]
     rates = vit.get("rates") or {}
-    return _ok(
-        "net",
-        {
-            "interfaces": nets,
-            "rates_mbs": {
-                "recv": rates.get("net_recv_mbs"),
-                "sent": rates.get("net_sent_mbs"),
-            },
-            "totals": (vit.get("network") or {}).get("total"),
+    payload = {
+        "interfaces": nets,
+        "rates_mbs": {
+            "recv": rates.get("net_recv_mbs"),
+            "sent": rates.get("net_sent_mbs"),
         },
-    )
+        "totals": (vit.get("network") or {}).get("total"),
+        "addresses": collect_ip_addresses(),
+        "gateway": collect_gateway(),
+        "dns": collect_dns(),
+    }
+    if include_public:
+        payload["public"] = snap.net_public_ip()
+    return _ok("net", payload)
 
 
-def resource_battery() -> dict:
-    vit = get_vitals()
+def resource_battery(snap: Snapshot) -> dict:
+    vit = snap.vitals()
     bat = vit.get("battery")
     if not bat:
         return _ok("battery", {"present": False, "note": "No battery detected (desktop or sensor missing)."})
     return _ok("battery", {"present": True, **bat})
 
 
-def resource_fans() -> dict:
-    vit = get_vitals()
+def resource_fans(snap: Snapshot) -> dict:
+    vit = snap.vitals()
     fans = vit.get("fans") or []
     return _ok(
         "fans",
@@ -529,8 +681,11 @@ def resource_fans() -> dict:
     )
 
 
-def resource_scan(include_pci: bool = False) -> dict:
-    inv = get_inventory(include_pci=include_pci)
+def resource_scan(snap: Snapshot, include_pci: bool = False) -> dict:
+    if include_pci == snap.include_pci:
+        inv = snap.inventory()
+    else:
+        inv = get_inventory(include_pci=include_pci)
     return _ok(
         "scan",
         {
@@ -542,25 +697,35 @@ def resource_scan(include_pci: bool = False) -> dict:
     )
 
 
-def resource_all() -> dict:
-    return _ok(
-        "all",
-        {
-            "status": resource_status()["data"],
-            "cpu": resource_cpu()["data"],
-            "gpu": resource_gpu()["data"],
-            "memory": resource_memory()["data"],
-            "temps": resource_temps()["data"],
-            "board": resource_board()["data"],
-            "os": resource_os()["data"],
-            "disk": resource_disk()["data"],
-            "net": resource_net()["data"],
-            "battery": resource_battery()["data"],
-            "fans": resource_fans()["data"],
-            "uptime": resource_uptime()["data"],
-            "version": resource_version()["data"],
-        },
-    )
+def resource_all(snap: Snapshot) -> dict:
+    sections: dict[str, Any] = {}
+    for name, handler in (
+        ("status", resource_status),
+        ("cpu", resource_cpu),
+        ("gpu", resource_gpu),
+        ("memory", resource_memory),
+        ("temps", resource_temps),
+        ("board", resource_board),
+        ("os", resource_os),
+        ("disk", resource_disk),
+        ("net", resource_net),
+        ("battery", resource_battery),
+        ("fans", resource_fans),
+        ("uptime", resource_uptime),
+        ("version", resource_version),
+    ):
+        try:
+            payload = handler(snap)
+            if payload.get("ok"):
+                sections[name] = payload.get("data")
+            else:
+                sections[name] = payload
+        except Exception as exc:
+            sections[name] = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return _ok("all", sections)
 
 
 HANDLERS: dict[str, Callable[..., dict]] = {
@@ -582,7 +747,7 @@ HANDLERS: dict[str, Callable[..., dict]] = {
 }
 
 
-def get_resource(name: str, **kwargs: Any) -> dict:
+def get_resource(name: str, snap: Snapshot, **kwargs: Any) -> dict:
     key = ALIASES.get(name.lower(), name.lower())
     handler = HANDLERS.get(key)
     if not handler:
@@ -593,11 +758,13 @@ def get_resource(name: str, **kwargs: Any) -> dict:
             "error": f"Unknown resource '{name}'. Try: {', '.join(CANONICAL)}",
         }
     if key == "scan":
-        return handler(include_pci=bool(kwargs.get("include_pci", False)))
-    return handler()
+        return handler(snap, include_pci=bool(kwargs.get("include_pci", False)))
+    if key == "net":
+        return handler(snap, include_public=bool(kwargs.get("include_public", False)))
+    return handler(snap)
 
 
-def apply_fields(payload: dict, fields: set[str]) -> dict:
+def apply_fields(payload: dict, fields: set[str], *, snap: Snapshot | None = None) -> dict:
     """Narrow a resource payload by field filters (temp, usage, name, kernel, …)."""
     if not payload.get("ok") or not fields:
         return payload
@@ -607,11 +774,14 @@ def apply_fields(payload: dict, fields: set[str]) -> dict:
         return payload
 
     filtered: Any = data
-    os_detail = fields & _OS_DETAIL_FIELDS
+    os_detail = fields & OS_DETAIL_FIELDS
+    net_detail = fields & NET_DETAIL_FIELDS
 
     # OS slices first (si os version, si kernel, …)
     if resource == "os" and os_detail and not (fields & {"temp", "usage"}):
         filtered = _filter_os(data, fields)
+    elif resource == "net" and net_detail:
+        filtered = _filter_net(data, fields, snap)
     else:
         if "temp" in fields:
             filtered = _filter_temp(resource, data)
@@ -624,7 +794,7 @@ def apply_fields(payload: dict, fields: set[str]) -> dict:
         if "name" in fields and "temp" not in fields and "usage" not in fields and resource != "os":
             filtered = _filter_name(resource, data)
         if "name" in fields and resource == "os" and not os_detail - {"name"}:
-            filtered = _filter_os(data, {"name"} | (fields & _OS_DETAIL_FIELDS))
+            filtered = _filter_os(data, {"name"} | (fields & OS_DETAIL_FIELDS))
         if "summary" in fields and len(fields) == 1:
             filtered = _filter_summary(resource, data)
 
@@ -651,13 +821,63 @@ def _filter_os(data: dict, fields: set[str]) -> dict:
     return out
 
 
+def _filter_net(data: dict, fields: set[str], snap: Snapshot | None) -> dict:
+    """Pick only requested network slices (si net ip, si net connections, …)."""
+    out: dict[str, Any] = {}
+    if "ip" in fields:
+        out["addresses"] = data.get("addresses") or []
+    if "gateway" in fields:
+        out["gateway"] = data.get("gateway") or {}
+    if "dns" in fields:
+        out["dns"] = data.get("dns") or {}
+    if snap is None:
+        from backend.collectors.network import (
+            collect_connections,
+            collect_listeners,
+            collect_public_ip,
+            collect_routes,
+            collect_wifi,
+        )
+
+        if "connections" in fields:
+            out["connections"] = collect_connections()
+        if "listen" in fields:
+            out["listeners"] = collect_listeners()
+        if "routes" in fields:
+            out["routes"] = collect_routes()
+        if "wifi" in fields:
+            out["wifi"] = collect_wifi()
+        if "public" in fields:
+            out["public"] = collect_public_ip()
+        return out
+
+    if "connections" in fields:
+        out["connections"] = snap.net_connections()
+    if "listen" in fields:
+        out["listeners"] = snap.net_listeners()
+    if "routes" in fields:
+        out["routes"] = snap.net_routes()
+    if "wifi" in fields:
+        out["wifi"] = snap.net_wifi()
+    if "public" in fields:
+        out["public"] = snap.net_public_ip()
+    return out
+
+
 def _filter_temp(resource: str | None, data: Any) -> Any:
     if resource == "cpu":
         return {"temp_c": data.get("temp_c"), "temperatures": data.get("temperatures")}
     if resource == "gpu":
         devices = data.get("devices") or []
         return {
-            "devices": [{"name": d.get("name"), "temp_c": d.get("temp_c")} for d in devices],
+            "devices": [
+                {
+                    "name": d.get("name"),
+                    "temp_c": d.get("temp_c"),
+                    "note": d.get("note"),
+                }
+                for d in devices
+            ],
         }
     if resource == "temps":
         return data
@@ -693,6 +913,7 @@ def _filter_usage(resource: str | None, data: Any) -> Any:
                     "usage_percent": d.get("usage_percent"),
                     "vram_used_mb": d.get("vram_used_mb"),
                     "vram_total_mb": d.get("vram_total_mb"),
+                    "note": d.get("note"),
                 }
                 for d in (data.get("devices") or [])
             ]
@@ -757,17 +978,34 @@ def run_query(tokens: list[str], **kwargs: Any) -> dict:
             "hint": "Examples: gpu · cpu temp · temps · motherboard · status",
         }
 
+    snap = Snapshot(
+        include_pci=bool(kwargs.get("include_pci", False)),
+        verbose=bool(kwargs.get("verbose", False)),
+    )
     results = []
     for r in resources:
-        payload = get_resource(r, **kwargs)
-        payload = apply_fields(payload, fields)
-        if unknown:
-            payload["unknown_tokens"] = unknown
-        results.append(payload)
+        try:
+            payload = get_resource(r, snap, **kwargs)
+            payload = apply_fields(payload, fields, snap=snap)
+            if unknown:
+                payload["unknown_tokens"] = unknown
+            results.append(payload)
+        except Exception as exc:
+            results.append(
+                {
+                    "ok": False,
+                    "at": _now(),
+                    "resource": r,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
 
     if len(results) == 1:
-        return results[0]
-    return {
+        out = results[0]
+        if kwargs.get("verbose"):
+            out["verbose"] = True
+        return out
+    out = {
         "ok": all(r.get("ok") for r in results),
         "at": _now(),
         "resource": "bundle",
@@ -775,6 +1013,9 @@ def run_query(tokens: list[str], **kwargs: Any) -> dict:
         "fields": sorted(fields),
         "results": results,
     }
+    if kwargs.get("verbose"):
+        out["verbose"] = True
+    return out
 
 
 def _cpu_temp(cpu: dict) -> float | None:
@@ -784,325 +1025,8 @@ def _cpu_temp(cpu: dict) -> float | None:
     return None
 
 
-# ---------- human text formatter ----------
-
-
-def format_human(payload: dict) -> str:
-    if not payload.get("ok"):
-        err = payload.get("error") or "error"
-        hint = payload.get("hint")
-        lines = [f"Error: {err}"]
-        if hint:
-            lines.append(f"Hint: {hint}")
-        return "\n".join(lines)
-
-    if payload.get("resource") == "bundle":
-        parts = [format_human(r) for r in payload.get("results") or []]
-        return "\n\n".join(parts)
-
-    r = payload.get("resource")
-    d = payload.get("data")
-    fields = set(payload.get("fields") or [])
-
-    if r == "status":
-        live = d.get("live") or {}
-        gpus = d.get("gpus") or []
-        gpus_s = ", ".join(_short_gpu(g) for g in gpus) if gpus else "—"
-        lines = [
-            f"{d.get('hostname') or 'host'}  ·  {d.get('os') or '—'}",
-            f"CPU  {d.get('cpu') or '—'}",
-            f"GPU  {gpus_s}",
-            f"RAM  {d.get('ram_gb')} GB",
-            f"Live  CPU {_pct(live.get('cpu_percent'))}  ·  "
-            f"GPU {_pct(live.get('gpu_percent'))}  ·  "
-            f"RAM {_pct(live.get('ram_percent'))}",
-            f"Temps  CPU {_deg(live.get('cpu_temp_c'))}  ·  GPU {_deg(live.get('gpu_temp_c'))}",
-        ]
-        return "\n".join(lines)
-
-    if r == "cpu":
-        if fields == {"temp"} or (fields & {"temp"} and "usage" not in fields and "name" not in fields):
-            return f"CPU temp  {_deg(d.get('temp_c'))}"
-        if fields == {"name"}:
-            return f"CPU  {d.get('name') or '—'}"
-        if fields == {"usage"}:
-            return f"CPU load  {_pct(d.get('usage_percent'))}  ·  load1 {d.get('load_1m')}"
-        return (
-            f"CPU  {d.get('name') or '—'}\n"
-            f"  Load   {_pct(d.get('usage_percent'))}\n"
-            f"  Cores  {d.get('cores_physical')}c / {d.get('cores_logical')}t\n"
-            f"  Freq   {d.get('freq_current_mhz') or '—'} MHz  (max {d.get('freq_max_mhz') or '—'})\n"
-            f"  Temp   {_deg(d.get('temp_c'))}\n"
-            f"  Load1  {d.get('load_1m')}"
-        )
-
-    if r == "gpu":
-        devices = d.get("devices") or []
-        if not devices:
-            return "GPU  (none detected)"
-        if "temp" in fields and "usage" not in fields and "name" not in fields:
-            lines = ["GPU temps"]
-            for g in devices:
-                lines.append(f"  {_short_gpu(g.get('name')):28}  {_deg(g.get('temp_c'))}")
-            return "\n".join(lines)
-        if fields == {"name"}:
-            return "GPU\n" + "\n".join(f"  {_short_gpu(g.get('name'))}" for g in devices)
-        if fields == {"usage"}:
-            lines = ["GPU load"]
-            for g in devices:
-                lines.append(
-                    f"  {_short_gpu(g.get('name')):28}  {_pct(g.get('usage_percent'))}  ·  "
-                    f"VRAM {g.get('vram_used_mb') or '—'} / {g.get('vram_total_mb') or '—'} MB"
-                )
-            return "\n".join(lines)
-        lines = ["GPU"]
-        for g in devices:
-            lines.append(f"  {_short_gpu(g.get('name'))}")
-            lines.append(
-                f"    Load {_pct(g.get('usage_percent'))}  ·  Temp {_deg(g.get('temp_c'))}  ·  "
-                f"Power {g.get('power_watts') if g.get('power_watts') is not None else '—'} W"
-            )
-            vram_u, vram_t = g.get("vram_used_mb"), g.get("vram_total_mb")
-            freq = g.get("graphics_mhz")
-            freq_s = f"{freq} MHz" if freq is not None else "—"
-            lines.append(
-                f"    VRAM {vram_u or '—'} / {vram_t or '—'} MB  ·  "
-                f"Core {freq_s}  ·  Driver {g.get('driver_version') or '—'}"
-            )
-        return "\n".join(lines)
-
-    if r == "memory":
-        ram = d.get("ram") or d
-        swap = d.get("swap") or {}
-        return (
-            f"Memory  {_pct(ram.get('percent'))}  ·  "
-            f"{ram.get('used_gb')} / {ram.get('total_gb')} GB\n"
-            f"  Available  {ram.get('available_gb')} GB\n"
-            f"  Swap       {_pct(swap.get('percent'))}  ·  "
-            f"{swap.get('used_gb')} / {swap.get('total_gb')} GB"
-        )
-
-    if r == "temps":
-        lines = [
-            f"Temps  CPU {_deg(d.get('cpu_c'))}",
-        ]
-        for g in d.get("gpus") or []:
-            lines.append(
-                f"       GPU {_short_gpu(g.get('name')):28}  {_deg(g.get('temp_c'))}".rstrip()
-            )
-        return "\n".join(lines)
-
-    if r == "fans":
-        fans = d.get("fans") or []
-        if not fans:
-            return "Fans  (none reported — laptop EC often hides RPM)"
-        lines = ["Fans"]
-        for f in fans:
-            label = f.get("label") or f.get("sensor") or "fan"
-            if f.get("rpm") is not None:
-                lines.append(f"  {label:28}  {f.get('rpm')} RPM")
-            elif f.get("percent") is not None:
-                lines.append(f"  {label:28}  {_pct(f.get('percent'))}")
-            else:
-                lines.append(f"  {label}")
-        return "\n".join(lines)
-
-    if r == "board":
-        sys_ = d.get("system") or {}
-        mb = d.get("motherboard") or {}
-        bios = d.get("bios") or {}
-        return (
-            f"Machine       {sys_.get('name') or '—'}\n"
-            f"Motherboard   {mb.get('name') or '—'}\n"
-            f"BIOS          {bios.get('name') or bios.get('version') or '—'}"
-        )
-
-    if r == "os":
-        # Filtered one-liners
-        if fields & _OS_DETAIL_FIELDS:
-            lines = []
-            if "version" in fields or "name" in fields:
-                lines.append(f"OS       {d.get('pretty_name') or d.get('name') or '—'}")
-            if "kernel" in fields:
-                lines.append(f"Kernel   {d.get('kernel') or d.get('release') or '—'}")
-            if "hostname" in fields:
-                lines.append(f"Host     {d.get('hostname') or '—'}")
-            if "desktop" in fields:
-                lines.append(
-                    f"Desktop  {d.get('desktop_environment') or '—'}  ·  "
-                    f"{d.get('session_type') or '—'}"
-                )
-            if "arch" in fields:
-                lines.append(f"Arch     {d.get('architecture') or d.get('machine') or '—'}")
-            return "\n".join(lines) if lines else "—"
-        return (
-            f"OS       {d.get('name') or d.get('pretty_name') or '—'}\n"
-            f"Kernel   {d.get('kernel') or d.get('release') or '—'}\n"
-            f"Host     {d.get('hostname') or '—'}\n"
-            f"Desktop  {d.get('desktop_environment') or '—'}  ·  "
-            f"{d.get('session_type') or '—'}\n"
-            f"Arch     {d.get('architecture') or '—'}"
-        )
-
-    if r == "uptime":
-        return f"Uptime   {d.get('human') or _fmt_uptime(d.get('uptime_seconds'))}"
-
-    if r == "version":
-        return f"{d.get('name') or 'System Inspector'}  {d.get('version') or '—'}\nCLI      {d.get('cli') or 'si'}"
-
-    if r == "disk":
-        lines = ["Disk"]
-        for disk in d.get("disks") or []:
-            lines.append(
-                f"  {disk.get('name') or disk.get('device')}  "
-                f"{disk.get('size_gb')} GB  {disk.get('media') or ''}".rstrip()
-            )
-        for p in (d.get("partitions") or [])[:8]:
-            lines.append(
-                f"  {p.get('mountpoint') or p.get('device')}  "
-                f"{p.get('percent')}%  ·  {p.get('used_gb')}/{p.get('total_gb')} GB"
-            )
-        rates = d.get("rates_mbs") or {}
-        if rates:
-            lines.append(f"  I/O  read {rates.get('read')}  write {rates.get('write')} MB/s")
-        return "\n".join(lines)
-
-    if r == "net":
-        rates = d.get("rates_mbs") or {}
-        lines = [
-            f"Network  ↓ {rates.get('recv')}  ↑ {rates.get('sent')} MB/s",
-        ]
-        for iface in d.get("interfaces") or []:
-            if iface.get("category") == "network_controller":
-                lines.append(f"  chip  {iface.get('name')}")
-            else:
-                up = iface.get("is_up")
-                flag = "up" if up else "down" if up is False else "?"
-                lines.append(f"  {iface.get('name')}  {flag}")
-        return "\n".join(lines)
-
-    if r == "battery":
-        if not d.get("present"):
-            return "Battery  not present / not reported"
-        plug = "AC" if d.get("power_plugged") else "battery"
-        return f"Battery  {d.get('percent')}%  ·  {plug}"
-
-    if r == "scan":
-        s = d.get("summary") or {}
-        counts = d.get("counts") or {}
-        lines = [
-            f"Scan  {s.get('hostname')}  ·  {s.get('os')}",
-            f"  CPU   {s.get('cpu')}",
-            f"  GPU   {', '.join(s.get('gpus') or [])}",
-            f"  RAM   {s.get('ram_gb')} GB",
-            f"  Items {counts.get('total_components')}",
-        ]
-        return "\n".join(lines)
-
-    if r == "all":
-        # compact dump of nested
-        import json as _json
-
-        return _json.dumps(d, indent=2)
-
-    import json as _json
-
-    return _json.dumps(payload, indent=2)
-
-
-def _pct(v: Any) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{round(float(v))}%"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _deg(v: Any) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{round(float(v))}°C"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_uptime(secs: Any) -> str:
-    if secs is None:
-        return "—"
-    try:
-        s = int(float(secs))
-    except (TypeError, ValueError):
-        return "—"
-    if s < 0:
-        s = 0
-    days, rem = divmod(s, 86400)
-    hours, rem = divmod(rem, 3600)
-    mins, _ = divmod(rem, 60)
-    parts: list[str] = []
-    if days:
-        parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours or days:
-        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
-    parts.append(f"{mins} min{'s' if mins != 1 else ''}")
-    return ", ".join(parts)
-
-
 def list_commands_help() -> str:
-    return """
-sysinspect — System Inspector CLI
-=================================
-Also installable as:  si
+    from backend.help_text import FULL_HELP
 
-USAGE
-  sysinspect <resource> [resource…] [field…] [options]
-  sysinspect watch|graph|live <resource> [field…] [--interval 1]
-  sysinspect help
-
-RESOURCES
-  status, summary          Quick host + live overview
-  cpu, processor           CPU model, load, freq, temp
-  gpu, graphics, nvidia    GPU(s): load, VRAM, temp, power
-  ram, memory, mem         Memory / swap
-  temp, temps, thermal     CPU + GPU temperatures
-  fans, fan, cooling       Fan RPM / PWM when reported
-  board, motherboard, mb   System / motherboard / BIOS
-  os, system, host         Full OS block
-  uptime, up               How long the machine has been on
-  version, ver, about      This app's version (System Inspector)
-  disk, storage, ssd       Disks, partitions, I/O rates
-  net, network, wifi       Interfaces + throughput
-  battery, bat             Laptop battery if present
-  scan, inventory, hw      Hardware inventory summary
-  all, everything          Big combined snapshot
-
-FIELDS (narrow the answer — e.g. si os version, si kernel)
-  temp, temperature        Temperatures only
-  usage, util, load        Utilization only
-  name, model              Names/models only
-  kernel                   Kernel string only (si kernel)
-  version                  With os: distro name only (si os version)
-  hostname                 Hostname only
-  desktop, de              Desktop session
-  arch                     Architecture
-
-EXAMPLES
-  si gpu
-  si cpu temp
-  si temps
-  si os version            → Pop!_OS …
-  si kernel                → kernel line only
-  si uptime
-  si version               → System Inspector 0.x
-  si live cpu gpu
-  si status --plain
-
-OPTIONS
-  --json, -j          Machine-readable JSON
-  --plain, -p         Text only: no banner, colors, meters
-  --pci               Include full PCI list (scan only)
-  --interval N        Seconds between watch updates (default 1)
-  --graph             Watch: also show optional line charts
-""".strip()
+    return FULL_HELP
 

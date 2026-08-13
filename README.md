@@ -1,22 +1,12 @@
 # System Inspector
 
-See your PC’s hardware and live stats in the terminal — **CPU, GPU, temps, RAM, disks**, and more.
+A terminal utility to monitor temperatures, loads, disks, network activity, and check hardware specs.
 
-Works **offline** on Linux. Nothing is sent anywhere. Great for checking temps, or when you want to check a specific part of your system.
-
----
-
-## Quick intro
-
-1. Open a terminal  
-2. Run install once  
-3. Type short commands like `si temps`
+Run `si` or `sysinspect` from any folder — completely local
 
 ---
 
-## Install (once)
-
-Open a terminal and paste:
+## Installation
 
 ```bash
 git clone https://github.com/nnapkin12/System-Inspector.git
@@ -24,70 +14,96 @@ cd System-Inspector
 ./install.sh
 ```
 
-That installs two commands you can use **any time, from any folder**:
+`./install.sh` puts `si` and `sysinspect` into `~/.local/bin`.
 
-| Type this | Same tool |
-|-----------|-----------|
-| `si` | short name (easiest) |
-| `sysinspect` | longer name |
-
-### If it says “command not found”
-
-Paste this once, then open a **new** terminal:
+If you get **command not found**, add that folder to your PATH once, then open a new terminal:
 
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### CLI only (no desktop menu icon)
+---
+
+## Usage Examples
+
+### Components
 
 ```bash
-./install.sh --cli-only
+si gpu             # GPU stats
+si cpu             # CPU stats
+si ram             # Memory/swap
+si motherboard     # Board/ BIOS info
+si battery         # laptop batt
+si fans            # fans speed, sometimes not reported
+si disk            # disks and free space
+si scan            # full hardware specs scan
 ```
+
+### Metrics, and other computer specs
+
+```bash
+si temps           # All hardware temperatures
+si status          # system overview
+si uptime          # uptime
+si os              # kernel, desktop, distro
+si version         # this app's version
+```
+
+### Target a specific component + its metric
+
+```bash
+si gpu temps
+si cpu temps
+si gpu load
+si cpu load
+```
+
+### Live terminal refresh (monitor metrics)
+
+```bash
+si live gpu load              # GPU load
+si live gpu temps             # GPU temperature
+si live gpu cpu temps         # Combine multiple components and metrics
+si live gpu --interval 0.5    # faster refresh / type 'faster' or 'slower' then Enter
+```
+
+While live mode is running, type `cpu`, `gpu`, or any component to switch — or type the full query like `net listen`.
 
 ---
 
-## First things to try
+## Network
 
 ```bash
-si status          # quick overview
-si gpu             # graphics cards
-si cpu             # processor
-si temps           # temperatures
-si live cpu gpu    # live bars (Ctrl+C to stop)
-si help            # reminder inside the terminal
+si net                  # speed, gateway, DNS, your IP
+si net connections      # active connections to your pc
+si net listen           # listening ports
+si net ip               # addresses per interface
+si net wifi             # SSID + signal (laptops)
+si net public           # public IP (needs internet)
 ```
 
-**Full list of commands:** [COMMANDS.md](https://github.com/nnapkin12/System-Inspector/blob/main/COMMANDS.md)
+colored text for connection health (green, yellow, red)
+
+More commands: [COMMANDS.md](COMMANDS.md)
 
 ---
 
-## Optional window / browser
+## Scripts / JSON
 
-Same data with a clickable window (not required for `si`):
-
-```bash
-./SystemInspector     # desktop window
-./run.sh              # browser at http://127.0.0.1:8787
-```
-
-If the window opens in a browser instead of a real app, Ubuntu/linux may need:
+JSON straight from the CLI:
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+si gpu --json
+si net connections --json
+si scan --json --redact
 ```
 
+`--redact` masks serials, UUIDs, boot_id, sku, and asset tags before printing (useful when sharing logs).
+
+Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph` · `--pci`
+
+json for pretty much anything i just didnt want to type 20 examples
 ---
 
-## Screenshots
-
-![Scan](docs/scan.png)
-
-![Utilization](docs/utilization.png)
-
-![CPU detail](docs/cpu-detail.png)
-
----
-
-Local only · no accounts · **MIT** ([LICENSE](LICENSE))
+Local only · [MIT](LICENSE)

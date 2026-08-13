@@ -27,6 +27,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Pytest / Cursor cache dirs
+pytest-cache-files*/
+
 # Env / secrets (if added later)
 .env
 .env.*

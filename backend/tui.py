@@ -8,7 +8,10 @@ import collections
 import re
 import shutil
 import sys
+from pathlib import Path
 from typing import Any, Literal
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Soft red / gray ANSI (disabled if not a TTY or --plain)
 _RESET = "\033[0m"
@@ -18,7 +21,6 @@ _RED = "\033[91m"
 _YEL = "\033[93m"
 _GRN = "\033[92m"
 _WHITE = "\033[97m"
-_CYAN = "\033[96m"
 
 
 def use_color(enabled: bool = True) -> bool:
@@ -31,39 +33,129 @@ def c(text: str, *codes: str, color: bool) -> str:
     return "".join(codes) + text + _RESET
 
 
-# Big solid-block monogram — clear “SI”, no fancy figlet soup
-_SI_MARK = [
-    "  ████████   ████",
+def health_style(level: str) -> tuple[str, ...]:
+    if level == "good":
+        return (_GRN,)
+    if level == "warn":
+        return (_YEL,)
+    if level == "bad":
+        return (_RED,)
+    return (_DIM,)
+
+
+def paint_health(text: str, level: str, *, color: bool) -> str:
+    return c(text, *health_style(level), color=color)
+
+
+# Fallback if logo file missing
+_SI_MARK_FALLBACK = [
+    "  ████████   ██████",
     "  ██           ██",
     "  ████████     ██",
     "        ██     ██",
-    "  ████████   ████",
+    "  ████████   ██████",
 ]
 
 
-def banner(color: bool = True, subtitle: str | None = None) -> str:
-    """Full header: big SI mark + clear SYSTEM INSPECTOR (no unreadable slant art)."""
-    lines = [c(line, _RED, _BOLD, color=color) for line in _SI_MARK]
-    lines.append("")
-    lines.append(
-        c("  SYSTEM INSPECTOR", _BOLD, _WHITE, color=color)
-        + c("  ·  hardware & live vitals", _DIM, color=color)
-    )
-    tag = subtitle or "local · offline · Ctrl+C stops live watches"
-    lines.append(c("  " + tag, _DIM, color=color))
-    lines.append(c("  " + "─" * min(52, max(36, term_width() - 4)), _DIM, color=color))
-    return "\n".join(lines)
+def _visible_len(s: str) -> int:
+    return len(re.sub(r"\033\[[0-9;]*m", "", s))
 
 
-def short_banner(color: bool = True, subtitle: str | None = None) -> str:
-    """Compact live header — solid mark + clear title."""
-    mark = c(" ██", _RED, _BOLD, color=color) + c(
-        " SYSTEM INSPECTOR ", _BOLD, _WHITE, color=color
-    )
-    line = mark + c("─" * max(8, min(24, term_width() - 28)), _DIM, color=color)
-    if subtitle:
-        line += "\n" + c(f"  {subtitle}", _DIM, color=color)
-    return line
+def load_si_logo() -> list[str]:
+    path = _PROJECT_ROOT / "ascii art" / "systeminspect logo.txt"
+    if not path.is_file():
+        return list(_SI_MARK_FALLBACK)
+    lines: list[str] = []
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.rstrip()
+        if line or lines:
+            lines.append(line)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines or list(_SI_MARK_FALLBACK)
+
+
+def side_by_side(
+    left: list[str],
+    right: list[str],
+    *,
+    gap: int = 4,
+) -> list[str]:
+    """Fastfetch-style: art on the left, text on the right."""
+    left_plain = [re.sub(r"\033\[[0-9;]*m", "", ln) for ln in left]
+    left_w = max((len(ln) for ln in left_plain), default=0)
+    height = max(len(left), len(right))
+    out: list[str] = []
+    for i in range(height):
+        l = left[i] if i < len(left) else ""
+        r = right[i] if i < len(right) else ""
+        pad = max(0, left_w - _visible_len(l))
+        out.append(l + " " * (pad + gap) + r)
+    return out
+
+
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text)
+
+
+def si_logo_colored(*, color: bool = True) -> list[str]:
+    if color:
+        return [c(line, _RED, _BOLD, color=True) for line in load_si_logo()]
+    return load_si_logo()
+
+
+def format_version_card(data: dict, *, color: bool = True) -> str:
+    """SI logo left, app version info right."""
+    logo = si_logo_colored(color=color)
+    name = data.get("name") or "System Inspector"
+    version = data.get("version") or "—"
+    cli = data.get("cli") or "si · sysinspect"
+    info = [
+        c(name, _BOLD, _WHITE, color=color),
+        c("Version", _DIM, color=color) + f"  {version}",
+        c("CLI", _DIM, color=color) + f"       {cli}",
+        c("local · offline · no server", _DIM, color=color),
+    ]
+    return "\n".join(side_by_side(logo, info, gap=4))
+
+
+def banner(color: bool = True) -> str:
+    """SI logo left, taglines right — only for bare `si` and `si help`."""
+    logo = si_logo_colored(color=color)
+    tag = [
+        c("SYSTEM INSPECTOR", _BOLD, _WHITE, color=color)
+        + c("  ·  local live vitals and hardware", _DIM, color=color),
+        c("· offline · Ctrl+C stops live", _DIM, color=color),
+    ]
+    body = side_by_side(logo, tag, gap=4)
+    sep = c("─" * min(72, max(40, term_width() - 2)), _DIM, color=color)
+    return "\n".join(body + ["", sep])
+
+
+def format_os_card(data: dict, *, color: bool = True) -> str:
+    """Distro logo left, OS facts right."""
+    from backend.art.os_logos import distro_logo
+
+    key, art, from_ff = distro_logo(data)
+    if from_ff:
+        logo = art if color else [strip_ansi(line) for line in art]
+    else:
+        logo = [c(line, _DIM, color=color) for line in art]
+
+    os_name = data.get("pretty_name") or data.get("name") or "—"
+    info = [
+        c("OS", _DIM, color=color) + f"       {os_name}",
+        c("Kernel", _DIM, color=color) + f"   {data.get('kernel') or data.get('release') or '—'}",
+        c("Host", _DIM, color=color) + f"     {data.get('hostname') or '—'}",
+        c("Desktop", _DIM, color=color)
+        + f"  {data.get('desktop_environment') or '—'}  ·  {data.get('session_type') or '—'}",
+        c("Arch", _DIM, color=color) + f"     {data.get('architecture') or '—'}",
+    ]
+    if from_ff and not color:
+        info = [strip_ansi(line) if isinstance(line, str) else line for line in info]
+    body = side_by_side(logo, info, gap=4)
+    return "\n".join(body)
+
 
 
 def term_width() -> int:
@@ -78,6 +170,16 @@ def term_height() -> int:
         return max(20, shutil.get_terminal_size((80, 24)).lines)
     except OSError:
         return 30
+
+
+def _sev_style_battery(v: float, *, plugged: bool) -> tuple[str, ...]:
+    if plugged:
+        return (_GRN,)
+    if v <= 10:
+        return (_BOLD, _RED)
+    if v <= 25:
+        return (_BOLD, _YEL)
+    return (_GRN,)
 
 
 def _sev_style(v: float, *, hot: bool = False) -> tuple[str, ...]:
@@ -101,10 +203,13 @@ def _sev_style(v: float, *, hot: bool = False) -> tuple[str, ...]:
     return (_GRN,)
 
 
-def default_bar_width() -> int:
-    """Prefer very wide bars — easier to read than charts."""
-    # leave room for: "    load  " (10) + "  100%" (~6) + padding
-    return max(28, min(56, term_width() - 18))
+def default_bar_width(*, columns: int = 1) -> int:
+    """Use nearly the full terminal width — sparse bars feel 'small'."""
+    cols = max(1, columns)
+    # "    load  " (~10) + value (~8) + gutters between columns
+    chrome = 18 + (8 if cols > 1 else 0)
+    usable = max(40, term_width() - 2) // cols
+    return max(28 if cols > 1 else 36, usable - chrome)
 
 
 def meter(
@@ -120,7 +225,7 @@ def meter(
         width = default_bar_width()
     if value is None:
         empty = "─" * width
-        tail = f"  {label}" if label else f"  —{unit if unit else ''}"
+        tail = f"  {label}" if label else f"  n/a"
         return c(f"[{empty}]", _DIM, color=color) + c(tail, _DIM, color=color)
     try:
         v = max(0.0, min(100.0, float(value)))
@@ -214,15 +319,88 @@ def decorate_human(text: str, color: bool = True) -> str:
                 f"{m.group(1)}{temp_meter(float(m.group(2)), width=max(14, w - 4), color=color)}"
             )
             continue
+        m = re.match(r"^(\s*Swap\s+)(\d+)%(.*)$", line)
+        if m:
+            out_lines.append(
+                f"{m.group(1)}{meter(float(m.group(2)), width=w, color=color)}{m.group(3)}"
+            )
+            continue
+        # CPU 45°C  (si temps)
+        m = re.match(r"^(CPU\s+)(\d+)°C\s*$", line)
+        if m:
+            out_lines.append(
+                f"{m.group(1)}{temp_meter(float(m.group(2)), width=max(14, w - 4), color=color)}"
+            )
+            continue
+        # GPU name  45°C  (si temps)
+        m = re.match(r"^(GPU\s+.+?\s+)(\d+)°C\s*$", line)
+        if m:
+            out_lines.append(
+                f"{m.group(1).rstrip()}  {temp_meter(float(m.group(2)), width=max(14, w - 4), color=color)}"
+            )
+            continue
+        # Temps  CPU 45°C  ·  GPU 50°C  (si status)
+        if line.startswith("Temps  ") and "°C" in line:
+            parts = line.replace("Temps  ", "", 1)
+            chunks = [p.strip() for p in parts.split("·")]
+            rebuilt = []
+            for ch in chunks:
+                mm = re.match(r"^(CPU|GPU)\s+(\d+)°C$", ch.strip())
+                if mm:
+                    rebuilt.append(
+                        f"{mm.group(1)} {temp_meter(float(mm.group(2)), width=max(10, w - 8), color=color)}"
+                    )
+                else:
+                    rebuilt.append(ch)
+            out_lines.append("Temps  " + "  ·  ".join(rebuilt))
+            continue
+        # Disk partition fill:   /home  72%  ·  10/50 GB
+        m = re.match(r"^(\s+\S+\s+)(\d+(?:\.\d+)?)%(.*)$", line)
+        if m and "·" in line and "GB" in line:
+            pct = float(m.group(2))
+            out_lines.append(
+                f"{m.group(1)}{meter(pct, width=max(14, w - 4), color=color, label=f'{int(round(pct))}%')}{m.group(3)}"
+            )
+            continue
+        # Fan duty %
+        m = re.match(r"^(\s+.+?\s+)(\d+)%\s*$", line)
+        if m and "Load" not in line and "Memory" not in line and "Swap" not in line:
+            pct = float(m.group(2))
+            style = _sev_style(pct) if pct < 90 else (_BOLD, _YEL)
+            bar_w = max(14, w - 4)
+            filled = int(round((pct / 100.0) * bar_w))
+            bar = "█" * filled + "░" * (bar_w - filled)
+            out_lines.append(
+                f"{m.group(1)}"
+                + c(f"[{bar}]", *style, color=color)
+                + c(f" {int(round(pct)):>3}%", _BOLD, *style, color=color)
+            )
+            continue
+        # CPU load  50%  ·  load1 …
+        m = re.match(r"^(CPU load\s+)(\d+)%(.*)$", line)
+        if m:
+            out_lines.append(
+                f"{m.group(1)}{meter(float(m.group(2)), width=w, color=color)}{m.group(3)}"
+            )
+            continue
         m = re.match(r"^(CPU temp\s+)(\d+)°C\s*$", line)
         if m:
             out_lines.append(f"{m.group(1)}{temp_meter(float(m.group(2)), width=w, color=color)}")
             continue
-        # Battery  80%  ·  AC
-        m = re.match(r"^(Battery\s+)(\d+)%(.*)$", line)
+        # Battery  80%  ·  AC  (inverted: low charge is bad)
+        m = re.match(r"^(Battery\s+)(\d+(?:\.\d+)?)%(.*)$", line)
         if m:
+            pct = float(m.group(2))
+            plugged = "AC" in m.group(3)
+            bar_w = w
+            filled = int(round((pct / 100.0) * bar_w))
+            bar = "█" * filled + "░" * (bar_w - filled)
+            style = _sev_style_battery(pct, plugged=plugged)
             out_lines.append(
-                f"{m.group(1)}{meter(float(m.group(2)), width=w, color=color)}{m.group(3)}"
+                f"{m.group(1)}"
+                + c(f"[{bar}]", *style, color=color)
+                + c(f" {int(round(pct)):>3}%", _BOLD, *style, color=color)
+                + m.group(3)
             )
             continue
         out_lines.append(line)
@@ -296,7 +474,10 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "label": "CPU",
                 "pct": _f(d.get("usage_percent")) if want_usage else None,
                 "temp_c": _f(d.get("temp_c")) if want_temp else None,
-                "extra": f"{d.get('freq_current_mhz') or '—'} MHz" if not fields else None,
+                "extra": (
+                    f"{d.get('freq_current_mhz') or 'n/a'} MHz" if not fields else None
+                ),
+                "note": d.get("note"),
             }
         )
         return rows
@@ -309,13 +490,16 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 extra = f"{g.get('power_watts')} W"
             elif g.get("vram_used_mb") is not None and g.get("vram_total_mb") is not None:
                 extra = f"VRAM {g.get('vram_used_mb')}/{g.get('vram_total_mb')} MB"
+            pct = _f(g.get("usage_percent")) if want_usage else None
+            temp = _f(g.get("temp_c")) if want_temp else None
             rows.append(
                 {
                     "key": f"gpu{i}",
                     "label": name,
-                    "pct": _f(g.get("usage_percent")) if want_usage else None,
-                    "temp_c": _f(g.get("temp_c")) if want_temp else None,
+                    "pct": pct,
+                    "temp_c": temp,
                     "extra": extra,
+                    "note": g.get("note"),
                 }
             )
         return rows
@@ -328,6 +512,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "pct": None,
                 "temp_c": _f(d.get("cpu_c")),
                 "extra": None,
+                "note": None if d.get("cpu_c") is not None else "CPU temp not reported",
             }
         )
         for i, g in enumerate(d.get("gpus") or []):
@@ -338,6 +523,12 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                     "pct": None,
                     "temp_c": _f(g.get("temp_c")),
                     "extra": None,
+                    "note": g.get("note")
+                    or (
+                        None
+                        if g.get("temp_c") is not None
+                        else "GPU temp not reported"
+                    ),
                 }
             )
         return rows
@@ -373,6 +564,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "pct": _f(live.get("gpu_percent")),
                 "temp_c": _f(live.get("gpu_temp_c")),
                 "extra": None,
+                "note": live.get("gpu_note"),
             }
         )
         rows.append(
@@ -411,6 +603,21 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
         return rows
 
     if r == "net":
+        # Slices like connections/listen use format_human (colored rows), not throughput bars.
+        if fields.intersection(
+            {
+                "connections",
+                "listen",
+                "routes",
+                "gateway",
+                "dns",
+                "wifi",
+                "public",
+                "ip",
+                "interfaces",
+            }
+        ):
+            return []
         rates = d.get("rates_mbs") or {}
         rows.append(
             {
@@ -475,68 +682,172 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
     return rows
 
 
-def format_watch_dashboard(payload: dict, color: bool = True) -> str:
-    """
-    Live board made of wide block bars only — no line charts.
-    Stacked layout is easier to scan while watching temps / load.
-    """
-    rows = extract_metrics(payload)
-    if not rows:
-        from backend.resources import format_human
-
-        return decorate_human(format_human(payload), color=color)
-
-    w_bar = default_bar_width()
+def _sensor_block(row: dict[str, Any], w_bar: int, color: bool) -> list[str]:
+    """One sensor's lines for the live board (no trailing blank)."""
     lines: list[str] = []
+    title = row["label"]
+    if row.get("extra") and row.get("pct") is None and row.get("temp_c") is None:
+        title = f"{title}  ·  {row['extra']}"
+    lines.append(c(f"  {title}", _BOLD, _WHITE, color=color))
 
-    for i, row in enumerate(rows):
-        if i:
-            lines.append("")  # space between sensors
-        title = row["label"]
-        if row.get("extra") and row.get("pct") is None and row.get("temp_c") is None:
-            title = f"{title}  ·  {row['extra']}"
-        lines.append(c(f"  {title}", _BOLD, _WHITE, color=color))
+    has_pct = row.get("pct") is not None
+    has_temp = row.get("temp_c") is not None
+    has_rate = row.get("rate") is not None
+    note = row.get("note")
 
-        has_pct = row.get("pct") is not None
-        has_temp = row.get("temp_c") is not None
-        has_rate = row.get("rate") is not None
-
-        if has_pct:
-            lines.append(
-                "    "
-                + c("load  ", _DIM, color=color)
-                + meter(row.get("pct"), width=w_bar, color=color)
+    if has_pct:
+        lines.append(
+            "    "
+            + c("load  ", _DIM, color=color)
+            + meter(row.get("pct"), width=w_bar, color=color)
+        )
+    if has_temp:
+        lines.append(
+            "    "
+            + c("temp  ", _DIM, color=color)
+            + temp_meter(row.get("temp_c"), width=w_bar, color=color)
+        )
+    if has_rate and not has_pct:
+        rate = float(row.get("rate") or 0.0)
+        pct_vis = min(100.0, (rate / 500.0) * 100.0)
+        lines.append(
+            "    "
+            + c("rate  ", _DIM, color=color)
+            + meter(
+                pct_vis,
+                width=w_bar,
+                color=color,
+                unit="",
+                label=f"{rate:.1f} MB/s",
             )
-        if has_temp:
-            lines.append(
-                "    "
-                + c("temp  ", _DIM, color=color)
-                + temp_meter(row.get("temp_c"), width=w_bar, color=color)
-            )
-        if has_rate and not has_pct:
-            rate = float(row.get("rate") or 0.0)
-            pct_vis = min(100.0, (rate / 500.0) * 100.0)
-            lines.append(
-                "    "
-                + c("rate  ", _DIM, color=color)
-                + meter(
-                    pct_vis,
-                    width=w_bar,
-                    color=color,
-                    unit="",
-                    label=f"{rate:.1f} MB/s",
-                )
-            )
-        if row.get("extra") and has_pct:
-            lines.append(c(f"          {row['extra']}", _DIM, color=color))
-        if not has_pct and not has_temp and not has_rate:
+        )
+    if row.get("extra") and has_pct:
+        lines.append(c(f"          {row['extra']}", _DIM, color=color))
+    if not has_pct and not has_temp and not has_rate:
+        # Prefer a clear sentence over a hollow bar of dashes
+        if note:
+            lines.append(c(f"    {note}", _DIM, color=color))
+        else:
             lines.append(
                 "    "
                 + c("      ", _DIM, color=color)
-                + meter(None, width=w_bar, color=color, unit="")
+                + meter(None, width=w_bar, color=color, unit="", label="n/a")
             )
+    elif note and (not has_pct or not has_temp):
+        lines.append(c(f"    {note}", _DIM, color=color))
+    return lines
 
+
+def _pad_block(block: list[str], height: int) -> list[str]:
+    out = list(block)
+    while len(out) < height:
+        out.append("")
+    return out
+
+
+def format_watch_dashboard(payload: dict, color: bool = True) -> str:
+    """
+    Live board of block bars. Dense by default; two columns on wide terminals.
+    """
+    rows = extract_metrics(payload)
+    if not rows:
+        from backend.format import format_human
+
+        return decorate_human(format_human(payload, color=color), color=color)
+
+    tw = term_width()
+    columns = 2 if tw >= 100 and len(rows) >= 2 else 1
+    w_bar = default_bar_width(columns=columns)
+    blocks = [_sensor_block(row, w_bar, color) for row in rows]
+
+    if columns == 1:
+        # Tight stack: one blank only between sensors (not after the last)
+        lines: list[str] = []
+        for i, block in enumerate(blocks):
+            if i:
+                lines.append("")
+            lines.extend(block)
+        return "\n".join(lines)
+
+    # Two-column: pair sensors side by side
+    col_w = max(40, (tw - 2) // 2)
+    lines = []
+    for i in range(0, len(blocks), 2):
+        left = blocks[i]
+        right = blocks[i + 1] if i + 1 < len(blocks) else []
+        h = max(len(left), len(right), 1)
+        left = _pad_block(left, h)
+        right = _pad_block(right, h)
+        if i:
+            lines.append("")
+        for a, b in zip(left, right):
+            pad = max(1, col_w - _visible_len(a))
+            if right and any(right):
+                lines.append(a + (" " * pad) + b)
+            else:
+                lines.append(a)
     return "\n".join(lines)
+
+
+# Words people can type while live — same vocabulary as `si …`
+LIVE_TYPE_HINT = "cpu  gpu  ram  temps  disk  net  fans  battery"
+
+LIVE_HELP_LINES = (
+    "type a word, then Enter — same as si:",
+    LIVE_TYPE_HINT,
+    "status / clear → overview",
+    "quit → leave   ·   graph → charts   ·   faster / slower → refresh",
+    "Esc clears typing   ·   Ctrl+C also quits",
+)
+
+
+def live_help_flash() -> str:
+    """Help shown only when the user asks (? or help) — not on every frame."""
+    return "\n".join(LIVE_HELP_LINES)
+
+
+def live_chrome(
+    *,
+    watching: str,
+    interval: float,
+    draft: str,
+    flash: str = "",
+    graph: bool = False,
+    refresh_slow: bool = False,
+    color: bool = True,
+) -> str:
+    """Minimal footer: status + prompt. Help only appears in flash (?)."""
+    watch = watching or "status"
+    graph_s = "on" if graph else "off"
+    slow_s = "  ·  refresh slow" if refresh_slow else ""
+    lines = [
+        c("  " + "─" * min(52, max(36, term_width() - 4)), _DIM, color=color),
+        c(f"  watching  {watch}", _BOLD, _WHITE, color=color)
+        + c(f"  ·  {interval:g}s  ·  charts {graph_s}{slow_s}  ·  ? help", _DIM, color=color),
+        c("  › ", _BOLD, _RED, color=color)
+        + c(draft, _WHITE, color=color)
+        + c("█", _DIM, color=color),
+    ]
+    if flash:
+        # Allow multi-line help without permanently eating vertical space
+        for i, part in enumerate(flash.split("\n")):
+            lines.insert(1 + i, c(f"  {part}", _BOLD, _YEL if i == 0 else _DIM, color=color))
+    return "\n".join(lines)
+
+
+def enter_alt_screen() -> None:
+    sys.stdout.write("\033[?1049h\033[H\033[?25l")
+    sys.stdout.flush()
+
+
+def leave_alt_screen() -> None:
+    sys.stdout.write("\033[?25h\033[?1049l")
+    sys.stdout.flush()
+
+
+def clear_home() -> None:
+    sys.stdout.write("\033[H\033[2J")
+    sys.stdout.flush()
 
 
 # ---------- live graph ----------

@@ -57,12 +57,6 @@ def collect_cpu_vitals() -> dict:
 
 
 def _cpu_brand() -> str:
-    for path in (
-        "/proc/device-tree/model",
-        "/sys/devices/virtual/dmi/id/product_name",
-    ):
-        pass  # keep brand from cpuinfo / lscpu
-
     brand = _cpuinfo_field("model name") or platform.processor()
     if brand and brand.strip() and brand != "unknown":
         return brand.strip()

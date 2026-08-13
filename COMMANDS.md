@@ -1,91 +1,208 @@
 # Commands — System Inspector
 
-After install (`./install.sh`), this works from **any folder** .
+(read the installation guide in README).
 
 Type `si` in a terminal. Longer name works too: `sysinspect` (example: `sysinspect status`).
 
-Stuck? Type:
+Stuck?
 
 ```bash
-si help
+si help    # shows a description of cmds, etc. for help
 ```
 
 ---
 
-## Use cases
+## Components
 
-| Goal | Command |
-|------|-----------|
-| Quick overview of your PC | `si status` |
-| GPU (name, load, temp, VRAM) | `si gpu` |
-| CPU (model, load, speed, temp) | `si cpu` |
-| Just temperatures | `si temps` |
-| Memory / RAM | `si ram` |
-| Disks and free space | `si disk` |
-| Network activity | `si net` |
-| Laptop battery | `si battery` |
-| Motherboard / BIOS | `si motherboard` |
-| OS version, hostname | `si os` |
-| Fan speeds (if your laptop reports them) | `si fans` |
-| Full hardware scan | `si scan` |
-| How long the PC has been on | `si uptime` |
-| This app's version | `si version` |
-| **Live** bars that refresh | `si live` · e.g. `si live cpu gpu` |
-| Stop live mode | press **Ctrl+C** |
+
+```bash
+si gpu             # GPU(s) stats (name, load, temp, VRAM, power)
+si cpu             # CPU stats (model, load, cores, freq, temp)
+si ram             # memory / swap
+si motherboard     # board / BIOS info
+si battery         # laptop battery (if present)
+si fans            # fan speeds (sometimes not reported)
+si disk            # disks and free space
+si scan            # full hardware inventory scan
+```
+
+Also works (same commands):
+
+| second names | Original |
+|----------|---------|
+| `processor` | `cpu` |
+| `graphics`, `nvidia`, `vram` | `gpu` |
+| `memory`, `mem` | `ram` |
+| `board`, `mb`, `mobo` | `motherboard` |
+| `bat` | `battery` |
+| `fan`, `cooling` | `fans` |
+| `storage`, `ssd`, `drive` | `disk` |
+| `inventory`, `hw`, `hardware` | `scan` |
 
 ---
 
-## Examples
+## Metrics, and Other computer specs
 
-Copy any line:
-
-```bash
-si status
-si gpu
-si cpu
-si temps
-si ram
-si battery
-si motherboard
-si disk
-si net
-si scan
-```
-
-### More detailed outputs
 
 ```bash
-si cpu temp       # only CPU temperature
-si gpu temp       # only GPU temperatures
-si gpu usage      # only GPU load / VRAM
-si cpu usage      # only CPU load
-si cpu gpu temp   # temps for both
-si os version     # only distro line (e.g. Pop!_OS 24.04 LTS)
-si kernel         # only kernel line
-si hostname       # only hostname
-si uptime
-si version        # System Inspector app version (not the OS)
+si temps           # all hardware temperatures (CPU + GPU(s))
+si status          # quick system overview
+si uptime          # how long the PC has been on
+si os              # distro, kernel, desktop, hostname
+si version         # this app's version (not the OS)
 ```
 
-Extra OS words (`version`, `kernel`, …) **do** narrow the answer — you don’t need a separate long command for each line.
+Use `si all --json` for a full machine dump (terminal default is JSON-heavy).
+
+Also works:
+
+| You type | Same as |
+|----------|---------|
+| `summary` | `status` |
+| `temp`, `thermal`, `temperature` | `temps` |
+| `up` | `uptime` |
+| `system`, `host` | `os` |
+| `network`, `eth` | `net` |
+| `ver`, `about` | `version` |
+| `everything`, `full` | `all` |
+
+### OS — one line at a time
+
+```bash
+si os version      # distro name only 
+si kernel          # kernel line only
+si hostname        # hostname only
+si os desktop      # desktop session
+si os arch         # CPU architecture
+```
 
 ---
 
-## Live refresh
+## Target a specific component + its metric
 
-Live bars for a simple terminal UI:
+Narrow one component to a single metric:
+
+```bash
+si gpu temps
+si cpu temps
+si gpu load
+si cpu load
+```
+
+More examples:
+
+```bash
+si cpu temp        # CPU temperature only
+si gpu temp        # GPU temperature only
+si gpu usage       # GPU load / VRAM only
+si cpu usage       # CPU load only
+si cpu gpu temp    # temps for both CPU and GPU
+si gpu name        # GPU name/model only
+si cpu name        # CPU name/model only
+```
+
+Field words (use after a component):
+
+| Field | Also works | What you get |
+|-------|------------|--------------|
+| `temp` | `temps`, `temperature` | temperatures only |
+| `load` | `usage`, `util` | utilization only |
+| `name` | `model` | names/models only |
+
+---
+
+## Network
+
+Local network info — interfaces, IPs, connections, DNS, routing, WiFi. Everything here is read from your machine except `public` (needs a internet lookup).
+
+```bash
+si net                  # overview (speed, gateway, DNS, IPv4)
+si net connections      # connections to your pc one line per process --verbose for every socket
+si net ip               # IPv4 / IPv6 addresses per interface
+si net wifi             # WiFi SSID / signal (nmcli)
+```
+
+More:
+
+```bash
+si net listen           # ports waiting for inbound connections
+si net dns              # DNS servers
+si net gateway          # default router
+si net routes           # routing table
+si net public           # your public IP (needs internet)
+```
+
+Also works:
+
+| You type | Same as |
+|----------|---------|
+| `network`, `eth` | `net` |
+| `ips`, `ipv4`, `ipv6`, `addresses` | `net ip` |
+| `conn`, `conns`, `sockets` | `net connections` |
+| `listening`, `ports` | `net listen` |
+| `route`, `default` | `net gateway` |
+| `nameservers`, `resolvers` | `net dns` |
+| `routing` | `net routes` |
+| `wlan`, `wireless` | `net wifi` |
+| `publicip` | `net public` |
+
+Notes:
+
+- `connections` and `listen` may need `sudo` for a full process list on some systems.
+- `connections` lines are color-coded (green / yellow / red); problem lines sort to the top. Use `--json` for CPU, RTT, and other raw fields.
+- `wifi` uses NetworkManager (`nmcli`) when available.
+- `public` calls a simple IP service over HTTPS — the only command here that uses the internet.
+
+Live monitoring:
+
+```bash
+si live net             # upload/download meters
+```
+
+---
+
+## Live terminal refresh (monitor metrics)
+
+Live bars that refresh in the terminal (default: every **1 second**):
 
 ```bash
 si live                       # overview
+si live gpu load              # GPU load
+si live gpu temps             # GPU temperature
+si live gpu cpu temps         # combine multiple components and metrics
 si live cpu gpu               # CPU + GPU load and temps
 si live temps                 # temperatures only
 si live gpu                   # GPU only
 si live gpu --interval 0.5    # faster refresh (0.5s)
 ```
 
-- Bars look like: `[████████░░░░░░]  42°C`
-- Default: refresh every **1 second** (change with `--interval`)
-- Stop with **Ctrl+C**
+Speed up monitoring, or type `faster` / `slower` then Enter while it's live.
+
+Bars look like: `[████████░░░░░░]  42°C`
+
+### While live is running
+
+You can change which component you're monitoring while it's live — instead of restarting, just type words and press **Enter**:
+
+| Command | output |
+|----------|----------------|
+| `cpu` | watch CPU only |
+| `gpu` | watch GPU only |
+| `cpu gpu` | watch CPU + GPU |
+| `temps` | temperatures |
+| `ram` / `disk` / `net` | those meters |
+| `status` or `clear` | back to overview |
+| `graph` | toggle line charts |
+| `faster` / `slower` | change refresh speed |
+| `quit` | leave live mode |
+
+Or type the full `si (component) (metric)` style words to switch what you're watching.
+
+Shortcuts:
+
+- '?' — show help while live
+- 'Esc' — clear what you were typing
+- 'Ctrl+C' — quit
 
 ### Line charts (optional — not default)
 
@@ -94,64 +211,32 @@ si graph temps
 si live cpu --graph
 ```
 
+Or type `graph` then Enter while already in live mode.
+
 ---
 
-## Extras
+## Flags
+
+Add these to any command:
 
 | Flag | What it does |
 |------|----------------|
-| `--plain` or `-p` | Plain text only (no colors / banner / meters) |
-| `--json` or `-j` | Machine-readable JSON for scripts |
-| `--interval 0.5` | Live update every half second |
-| `--graph` | Add line charts in live mode |
-| `--pci` | With `si scan`, list more PCI devices (long) |
-
-Examples:
+| `--plain` or `-p` | plain text only (no colors / banner / meters) |
+| `--json` or `-j` | machine-readable JSON for scripts |
+| `--redact` | mask serials, UUIDs, boot_id, sku, asset tags (logs / sharing) |
+| `--verbose` or `-v` | every network socket (`si net connections --verbose`) |
+| `--interval 0.5` | live update every half second |
+| `--graph` | add line charts in live mode |
+| `--pci` | with `si scan`, list more PCI devices (long) |
 
 ```bash
 si status --plain
 si gpu --json
+si scan --json --redact
 si scan --pci
+si net connections --verbose
+si live cpu gpu --interval 0.5 --graph
 ```
-
----
-
-## Wording
-
-Several words map to the same info.
-
-### Hardware & sensors
-
-| Type | Also works | Output |
-|------|------------|--------|
-| `status` | `summary` | Host + live RAM % and temps |
-| `cpu` | `processor` | Model, load, cores, freq, temp |
-| `gpu` | `graphics`, `nvidia`, `vram` | Load, VRAM, temp, power |
-| `ram` | `memory`, `mem` | Memory and swap |
-| `temps` | `temp`, `thermal` | CPU + GPU temperatures |
-| `fans` | `fan`, `cooling` | Fan RPM/PWM if reported |
-| `motherboard` | `board`, `mb`, `mobo` | Machine, board, BIOS |
-| `os` | `system`, `host`, `kernel` | Distro, kernel, desktop |
-| `disk` | `storage`, `ssd`, `drive` | Disks, space, I/O rates |
-| `net` | `network`, `wifi` | Interfaces + throughput |
-| `battery` | `bat` | Charge % (laptops) |
-| `scan` | `inventory`, `hw`, `hardware` | Hardware summary |
-| `uptime` | `up` | Time since boot |
-| `version` | `ver`, `about` | System Inspector app version |
-| `all` | `everything`, `full` | Large dump of almost everything |
-
-### Filters
-
-| Type after a resource | Effect |
-|----------------------|--------|
-| `temp` / `temperature` | Temperatures only |
-| `usage` / `util` / `load` | Utilization only |
-| `name` / `model` | Names/models only |
-| `version` (with `os`) | Distro name only |
-| `kernel` | Kernel only (`si kernel` alone works) |
-| `hostname` | Hostname only |
-| `desktop` / `de` | Desktop session |
-| `arch` | CPU arch |
 
 ---
 
@@ -159,8 +244,8 @@ Several words map to the same info.
 
 | Name | Notes |
 |------|--------|
-| `si` | Short  |
-| `sysinspect` | Longer name, same tool |
+| `si` | short |
+| `sysinspect` | longer name, same tool |
 
 Installed by `./install.sh` into `~/.local/bin`.
 
@@ -183,31 +268,11 @@ rm -f ~/.local/bin/sysinspect ~/.local/bin/si
 
 ---
 
-## For the desktop app (optional)
-
-The terminal tool **doesnt** needs this.
-
-If the desktop app or `./run.sh` is running, the same data is also available locally at `http://127.0.0.1:8787` for the UI / scripting.
-
-| Request | Like CLI |
-|---------|----------|
-| `GET /api/status` | `si status` |
-| `GET /api/cpu` | `si cpu` |
-| `GET /api/gpu` | `si gpu` |
-| `GET /api/memory` | `si ram` |
-| `GET /api/temps` | `si temps` |
-| `GET /api/board` | `si motherboard` |
-| `GET /api/os` | `si os` |
-| `GET /api/disk` | `si disk` |
-| `GET /api/net` | `si net` |
-| `GET /api/battery` | `si battery` |
-| `GET /api/scan` | `si scan` |
-| `GET /api/all` | `si all` |
-| `GET /api/query?q=gpu+temp` | `si gpu temp` |
-| `GET /api/help` | help text |
+## JSON (scripts)
 
 ```bash
-curl -s http://127.0.0.1:8787/api/gpu | jq
+si gpu --json
+si status --json
+si net connections --json
+si scan --json --redact
 ```
-
-`si` is no server required.
