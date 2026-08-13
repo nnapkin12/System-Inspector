@@ -1,10 +1,4 @@
-#  ░██████                  ░██████
-# ░██   ░██                   ░██
-#░██                          ░██
-# ░████████                   ░██
-#        ░██                  ░██
-# ░██   ░██                   ░██
-#  ░██████  SYSTEM          ░██████ INSPECT
+#System Inspect
 
 A terminal utility to monitor temperatures, loads, disks, network activity, and check hardware specs.
 
