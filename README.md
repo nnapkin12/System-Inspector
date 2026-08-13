@@ -1,4 +1,5 @@
-#System Inspect
+<img alt="SYSTEM INSPECT" src="assets/header-dark.png#gh-dark-mode-only" width="720">
+<img alt="SYSTEM INSPECT" src="assets/header-light.png#gh-light-mode-only" width="720">
 
 A terminal utility to monitor temperatures, loads, disks, network activity, and check hardware specs.
 
