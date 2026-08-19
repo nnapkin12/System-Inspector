@@ -46,7 +46,7 @@ Stuck?  si help
 ── Network ─────────────────────────────────────────────────
 
   si net                  overview (speed, gateway, DNS, IP)
-  si net connections      one line per app (--verbose every socket)
+  si net connections      every socket (process, local → remote)
   si net listen           listening ports
   si net ip               addresses per interface
   si net wifi             SSID + signal (laptops)
@@ -81,9 +81,9 @@ Stuck?  si help
   --json / -j        JSON output (snapshot unless `si live … --json`)
   --once             one snapshot even for sensors
   --redact           mask serials, UUIDs, boot_id, sku (sharing / logs)
-  --verbose / -v     every socket (connections)
+  --verbose / -v     extra JSON fields (connections are always full)
   --interval 0.5     live refresh speed
-  --graph            line charts in live mode
+  --graph            sparklines in live mode
   --no-logo          hide the SI ASCII header (on by default)
   --pci              extra PCI detail with si scan
 

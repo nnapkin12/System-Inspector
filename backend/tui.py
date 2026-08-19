@@ -11,8 +11,6 @@ import sys
 from pathlib import Path
 from typing import Any, Literal
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 # Soft red / gray ANSI (disabled if not a TTY or --plain)
 _RESET = "\033[0m"
 _DIM = "\033[2m"
@@ -61,8 +59,31 @@ def _visible_len(s: str) -> int:
     return len(re.sub(r"\033\[[0-9;]*m", "", s))
 
 
+def _fit_line(s: str, width: int) -> str:
+    """Keep one terminal row: strip ANSI for width, never wrap."""
+    if width < 1:
+        return ""
+    if _visible_len(s) <= width:
+        return s
+    out: list[str] = []
+    vis = 0
+    i = 0
+    while i < len(s) and vis < width:
+        if s[i] == "\033":
+            m = re.match(r"\033\[[0-9;]*m", s[i:])
+            if m:
+                out.append(m.group(0))
+                i += len(m.group(0))
+                continue
+        out.append(s[i])
+        vis += 1
+        i += 1
+    out.append(_RESET)
+    return "".join(out)
+
+
 def load_si_logo() -> list[str]:
-    path = _PROJECT_ROOT / "ascii art" / "systeminspect logo.txt"
+    path = Path(__file__).resolve().parent / "art" / "logo.txt"
     if not path.is_file():
         return list(_SI_MARK_FALLBACK)
     lines: list[str] = []
@@ -215,11 +236,14 @@ def _sev_style(v: float, *, hot: bool = False) -> tuple[str, ...]:
 
 
 def default_bar_width(*, columns: int = 1) -> int:
-    """Nearly full terminal width. Live board puts the number on its own line."""
+    """Bar body so `    [bar]` always fits on one row."""
     cols = max(1, columns)
-    gutter = 8 if cols > 1 else 4
-    usable = max(40, term_width() - gutter) // cols
-    return max(32 if cols > 1 else 40, usable - 4)
+    tw = term_width()
+    indent_and_brackets = 6  # four spaces + [ ]
+    if cols == 1:
+        return max(8, tw - indent_and_brackets)
+    col_w = max(24, (tw - 2) // cols)
+    return max(8, col_w - indent_and_brackets)
 
 
 def bar_thickness() -> int:
@@ -606,6 +630,27 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                     ),
                 }
             )
+        gpu_names = {(g.get("name") or "").lower() for g in (d.get("gpus") or [])}
+        from backend.format import _is_cpu_or_gpu_temp_label
+
+        extra_i = 0
+        for s in d.get("all_sensors") or []:
+            label = (s.get("label") or s.get("sensor") or "sensor").strip()
+            if _is_cpu_or_gpu_temp_label(label, gpu_names):
+                continue
+            temp = _f(s.get("celsius"))
+            if temp is None:
+                continue
+            rows.append(
+                {
+                    "key": f"hw{extra_i}",
+                    "label": label[:28],
+                    "pct": None,
+                    "temp_c": temp,
+                    "extra": None,
+                }
+            )
+            extra_i += 1
         return rows
 
     if r == "memory":
@@ -835,7 +880,7 @@ def format_watch_dashboard(payload: dict, color: bool = True) -> str:
             if i:
                 lines.append("")
             lines.extend(block)
-        return "\n".join(lines)
+        return "\n".join(_fit_line(ln, tw) for ln in lines)
 
     # Two-column: pair sensors side by side
     col_w = max(40, (tw - 2) // 2)
@@ -854,7 +899,7 @@ def format_watch_dashboard(payload: dict, color: bool = True) -> str:
                 lines.append(a + (" " * pad) + b)
             else:
                 lines.append(a)
-    return "\n".join(lines)
+    return "\n".join(_fit_line(ln, tw) for ln in lines)
 
 
 # Words people can type while live — same vocabulary as `si …`
@@ -900,11 +945,12 @@ def live_chrome(
         # Allow multi-line help without permanently eating vertical space
         for i, part in enumerate(flash.split("\n")):
             lines.insert(1 + i, c(f"  {part}", _BOLD, _YEL if i == 0 else _DIM, color=color))
-    return "\n".join(lines)
+    tw = term_width()
+    return "\n".join(_fit_line(ln, tw) for ln in lines)
 
 
 def enter_alt_screen() -> None:
-    sys.stdout.write("\033[?1049h\033[H\033[?25l")
+    sys.stdout.write("\033[?1049h\033[H\033[J\033[?25l")
     sys.stdout.flush()
 
 
@@ -913,36 +959,65 @@ def leave_alt_screen() -> None:
     sys.stdout.flush()
 
 
+def _write_row(row: int, line: str) -> None:
+    """Move to a 1-based row and replace that line only."""
+    sys.stdout.write(f"\033[{max(1, row)};1H")
+    sys.stdout.write(line)
+    sys.stdout.write("\033[K")
+
+
 def paint_frame(text: str) -> None:
-    """Home, write the frame, erase leftover lines. No full-screen wipe."""
+    """Home, write each line in place, erase leftover rows. No full-screen wipe."""
     sys.stdout.write("\033[H")
-    sys.stdout.write(text)
-    if not text.endswith("\n"):
-        sys.stdout.write("\n")
+    lines = text.splitlines() or [""]
+    for i, line in enumerate(lines):
+        if i:
+            sys.stdout.write("\n")
+        sys.stdout.write(line)
+        sys.stdout.write("\033[K")
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+
+
+def paint_board_region(text: str, stop_row: int) -> None:
+    """Rewrite rows 1..stop_row-1. Does not move the footer."""
+    stop_row = max(2, stop_row)
+    lines = text.splitlines() if text else []
+    last = 0
+    for i, line in enumerate(lines):
+        row = 1 + i
+        if row >= stop_row:
+            break
+        _write_row(row, line)
+        last = row
+    for row in range(last + 1, stop_row):
+        _write_row(row, "")
+    sys.stdout.flush()
+
+
+def paint_chrome_region(row: int, text: str) -> None:
+    """Rewrite the footer from *row* and clear anything below it."""
+    lines = text.splitlines() or [""]
+    for i, line in enumerate(lines):
+        _write_row(row + i, line)
     sys.stdout.write("\033[J")
     sys.stdout.flush()
 
 
 def paint_from_row(row: int, text: str) -> None:
     """Rewrite from a 1-based row to the end of the screen (prompt-only updates)."""
-    sys.stdout.write(f"\033[{max(1, row)};1H")
-    sys.stdout.write(text)
-    if not text.endswith("\n"):
-        sys.stdout.write("\n")
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+    paint_chrome_region(row, text)
 
 
 def paint_region(row: int, text: str, *, clear_through: int | None = None) -> None:
     """Paint *text* at *row* without touching lines below *clear_through*."""
-    sys.stdout.write(f"\033[{max(1, row)};1H")
-    sys.stdout.write(text)
-    if not text.endswith("\n"):
-        sys.stdout.write("\n")
-    end_row = row + text.count("\n")
-    if clear_through is not None and clear_through >= end_row:
+    lines = text.splitlines() or [""]
+    end_row = row + len(lines) - 1
+    for i, line in enumerate(lines):
+        _write_row(row + i, line)
+    if clear_through is not None and clear_through > end_row:
         for r in range(end_row + 1, clear_through + 1):
-            sys.stdout.write(f"\033[{r};1H\033[K")
+            _write_row(r, "")
     sys.stdout.flush()
 
 
@@ -1001,105 +1076,12 @@ class LiveHistory:
 
 
 def render_graph(history: LiveHistory, title: str, color: bool = True) -> str:
-    """
-    Live charts with *fixed* scales so a flat line means quiet, not broken axis.
-      load  → y 0..100 %
-      temps → y 20..100 °C
-      rates → auto with floor
-    Draws two (or three) stacked panels so different units never share a Y axis.
-    """
+    """Fixed-scale sparklines. A flat line means quiet, not a broken axis."""
     if not history.nonempty():
         return c("  (graph: collecting samples…)", _DIM, color=color)
 
-    panels: list[tuple[str, dict[str, collections.deque[float]], tuple[float, float] | None]] = []
-    pct = history.by_unit("pct")
-    temp = history.by_unit("temp")
-    rate = history.by_unit("rate")
-    if pct:
-        panels.append(("utilization %", pct, (0.0, 100.0)))
-    if temp:
-        panels.append(("temperature °C", temp, (20.0, 100.0)))
-    if rate:
-        panels.append(("throughput MB/s", rate, None))
-
-    if not panels:
-        return c("  (graph: no numeric series yet)", _DIM, color=color)
-
-    blocks: list[str] = []
-    try:
-        import plotext as plt  # type: ignore
-    except ImportError:
-        return _spark_fallback(history, title, color=color)
-
-    width = max(60, min(term_width() - 2, 120))
-    # leave room for banner + meters; bigger than the old 18-row single plot
-    avail = max(16, term_height() - 14)
-    height_each = max(10, min(16, avail // max(1, len(panels))))
-
-    palette = ["red+", "orange+", "tomato+", "cyan+", "white+", "yellow+", "green+"]
-
-    for panel_title, data_map, ylim in panels:
-        plt.clear_figure()
-        plt.plotsize(width, height_each)
-        plt.title(f"{title} · {panel_title}")
-        try:
-            plt.theme("dark" if color else "clear")
-        except Exception:
-            pass
-        if ylim is not None:
-            try:
-                plt.ylim(ylim[0], ylim[1])
-            except Exception:
-                pass
-        i = 0
-        any_plotted = False
-        for name, dq in data_map.items():
-            if len(dq) < 1:
-                continue
-            vals = list(dq)
-            # pad short series so plotext has an x range
-            if len(vals) == 1:
-                vals = vals + vals
-            try:
-                plt.plot(vals, label=name[:20], marker="braille", color=palette[i % len(palette)])
-                any_plotted = True
-            except Exception:
-                try:
-                    plt.plot(vals, label=name[:20])
-                    any_plotted = True
-                except Exception:
-                    pass
-            i += 1
-        if not any_plotted:
-            continue
-        try:
-            plt.xlabel("samples →")
-        except Exception:
-            pass
-        try:
-            built = plt.build()
-        except Exception:
-            import io
-            from contextlib import redirect_stdout
-
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                plt.show()
-            built = buf.getvalue()
-        blocks.append(built.rstrip())
-
-    if not blocks:
-        return _spark_fallback(history, title, color=color)
-    return "\n\n".join(blocks)
-
-
-def _spark_fallback(history: LiveHistory, title: str, color: bool = True) -> str:
-    """Fixed-scale sparklines (no plotext). Y scale is stable so motion is real."""
     blocks = " ▁▂▃▄▅▆▇█"
-    lines = [
-        c(f"  {title}", _BOLD, color=color),
-        c("  (pip install plotext → fuller charts; these sparklines use fixed scales)", _DIM, color=color),
-    ]
+    lines = [c(f"  {title}", _BOLD, color=color)]
 
     def spark(vals: list[float], lo: float, hi: float) -> str:
         span = (hi - lo) or 1.0
@@ -1110,6 +1092,7 @@ def _spark_fallback(history: LiveHistory, title: str, color: bool = True) -> str
             out.append(blocks[min(8, int(t * 8))])
         return "".join(out)
 
+    drew = False
     for unit, lo, hi, suffix in (
         ("pct", 0.0, 100.0, "%"),
         ("temp", 20.0, 100.0, "°C"),
@@ -1118,12 +1101,12 @@ def _spark_fallback(history: LiveHistory, title: str, color: bool = True) -> str
         data = history.by_unit(unit)
         if not data:
             continue
+        drew = True
         lines.append(c(f"  ── {unit} ({lo:g}–{hi:g}{suffix}) ──", _DIM, color=color))
         for name, dq in data.items():
             vals = list(dq)
             if not vals:
                 continue
-            # rates: auto hi
             use_hi = hi
             use_lo = lo
             if unit == "rate":
@@ -1134,4 +1117,6 @@ def _spark_fallback(history: LiveHistory, title: str, color: bool = True) -> str
                 f"  {name[:18]:18} {bar}  "
                 + c(f"{last:.1f}{suffix if unit != 'rate' else ' MB/s'}", _BOLD, color=color)
             )
+    if not drew:
+        return c("  (graph: no numeric series yet)", _DIM, color=color)
     return "\n".join(lines)

@@ -8,7 +8,7 @@ Snapshot: facts (os, board, scan) and expensive / external net slices.
 from __future__ import annotations
 
 from backend.fields import NET_DETAIL_FIELDS
-from backend.resources import parse_query
+from backend.query import parse_query
 
 # Refresh these on a TTY unless the user asked for a snapshot.
 LIVE_RESOURCES = frozenset(

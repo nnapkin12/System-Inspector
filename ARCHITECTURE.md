@@ -37,12 +37,14 @@ flowchart LR
 | Path | Role |
 |------|------|
 | `sysinspect.py`, `sysinspect`, `si` | Entry points |
+| `install.sh`, `setup-venv.sh` | venv + `~/.local/bin` wrappers |
 | `backend/collectors/` | Talk to the OS; return plain dicts |
 | `backend/snapshot.py` | Per-query cache (inventory, vitals, net slices) |
-| `backend/resources.py` | Aliases, `parse_query`, resource builders, field filters |
+| `backend/query.py` | Aliases, `parse_query`, vitals-domain selection |
+| `backend/resources.py` | Resource builders, field filters, `run_query` |
 | `backend/fields.py` | OS / net field token sets shared by query + format |
 | `backend/format.py` | Terminal formatting |
-| `backend/tui.py` | Live UI, banners, plotext graphs |
+| `backend/tui.py` | Live UI, banners, sparkline graphs |
 | `backend/live_mode.py` | Live vs snapshot policy |
 | `backend/live_loop.py` | Interactive / piped refresh loop |
 | `backend/live_query.py` | Live-mode query timeout + inventory reuse |
@@ -64,7 +66,7 @@ Subprocess timeouts in `run_cmd()` return `None`; callers treat that as “data 
 
 ## Query language
 
-Tokens map through `ALIASES` and `FIELD_ALIASES` in `resources.py`. Examples:
+Tokens map through `ALIASES` and `FIELD_ALIASES` in `query.py`. Examples:
 
 - `si gpu` → resource `gpu`
 - `si gpu temp` → resource `gpu`, field filter `temp`
@@ -79,6 +81,8 @@ Inventory discovers cards via NVML, lspci, or DRM. Live stats come from NVML, nv
 
 NVML + lspci inventory is merged by **PCI BDF** (short `01:00.0` and `0000:01:00.0` are the same slot). Unmatched lspci NVIDIA cards are kept, not glued onto the first NVML entry.
 
+`nvidia-ml-py` is optional. `./install.sh` installs it when `nvidia-smi` is on PATH. Without it, NVIDIA cards still appear via lspci/DRM; live clocks/power are absent.
+
 `merge_gpu_devices()` matching order:
 
 1. PCI BDF / NVML index (when both sides expose them)
@@ -90,7 +94,7 @@ Tests cover single-GPU, dual identical NVIDIA (two PCI slots), and iGPU + dGPU l
 
 On a TTY, sensor commands (`cpu`, `gpu`, `ram`, `temps`, `status`, `disk`, `net` throughput, `fans`, `battery`) enter the live board. Facts (`os`, `board`, `scan`, `version`, `uptime`, `all`) and expensive net slices (`public`, `connections`, `listen`, …) print once. `--once`, `--json`, and `--plain` force a snapshot. `si live …` still forces the refresh loop.
 
-`live_loop` fetches on a worker (`run_query_timed`), then paints. Keystrokes only rewrite the prompt. Collection is not done inside paint. Inventory is reused for **30s** across ticks so lspci/DMI is not repeated every second.
+`live_loop` fetches on a worker (`run_query_timed`), then paints. The prompt stays on the **bottom rows**; value ticks rewrite the meters above it and do not redraw the prompt. Keystrokes only rewrite the prompt unless footer height changes (help / flash). Collection is not done inside paint. Inventory is reused for **30s** across ticks so lspci/DMI is not repeated every second.
 
 If collection exceeds **2.5s**, the UI returns immediately, keeps the previous payload, and shows **refresh slow**. The slow worker is left running; the next refresh reaps it instead of stacking another query. One-shot commands (`si net public`) are not capped.
 
@@ -106,7 +110,7 @@ If collection exceeds **2.5s**, the UI returns immediately, keeps the previous p
 
 1. Add collector logic in `backend/collectors/` if new data is needed.
 2. Add a `resource_*()` handler in `resources.py` and register it in `HANDLERS`.
-3. Add aliases to `ALIASES` (and field aliases if sliceable).
+3. Add aliases to `ALIASES` in `query.py` (and field aliases if sliceable).
 4. Add a branch in `format.py` `format_human()` for display.
 5. If it appears in live mode, extend `extract_metrics()` in `tui.py` and `LIVE_RESOURCES` in `live_mode.py` if it should auto-refresh.
 6. Add tests in `tests/` for parsing and formatting.

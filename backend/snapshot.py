@@ -43,10 +43,7 @@ class Snapshot:
         if self._net_connections is None:
             from backend.collectors.network import collect_connections
 
-            if self.verbose:
-                self._net_connections = collect_connections(limit=None)
-            else:
-                self._net_connections = collect_connections()
+            self._net_connections = collect_connections()
         return self._net_connections
 
     def net_listeners(self) -> dict:

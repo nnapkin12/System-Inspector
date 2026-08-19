@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from backend.collectors.vitals import get_vitals
-from backend.resources import vitals_needs_for, vitals_needs_for_tokens
+from backend.query import vitals_needs_for, vitals_needs_for_tokens
 
 
 def test_vitals_needs_gpu_only():

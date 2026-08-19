@@ -1,4 +1,3 @@
-# CLI dependencies — local only, no accounts or cloud APIs.
+# Runtime deps. NVIDIA bindings are optional — install.sh adds nvidia-ml-py
+# when nvidia-smi is on PATH. AMD/Intel GPUs work without it.
 psutil>=6.0.0
-nvidia-ml-py>=12.0.0
-plotext>=5.0

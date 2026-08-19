@@ -1,8 +1,9 @@
 """
 Live refresh loop.
 
-Fetch never runs inside paint. Keystrokes only rewrite the prompt line
-unless the board itself changed (new query, graph toggle, resize, help).
+Fetch never runs inside paint. The footer stays on the last rows of the
+terminal. Value ticks rewrite the board only; typing rewrites the prompt.
+Full redraws are for query changes, resize, help, and flash height changes.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import Any, Callable
 from backend.live_mode import query_is_liveable
 from backend.live_query import InventoryCache, poll_query_timed, run_query_timed
 from backend.collectors.gpu import nvml_live_begin, nvml_live_end
-from backend.resources import ALIASES, FIELD_ALIASES, parse_query
+from backend.query import is_known_token, parse_query
 from backend.tui import (
     LiveHistory,
     enter_alt_screen,
@@ -29,10 +30,12 @@ from backend.tui import (
     live_chrome,
     live_help_flash,
     logo_header,
-    paint_frame,
-    paint_from_row,
+    paint_board_region,
+    paint_chrome_region,
     render_graph,
     term_height,
+    term_width,
+    _fit_line,
 )
 
 
@@ -61,6 +64,7 @@ class LiveState:
     need_full: bool = False
     painted: bool = False
     prev_flash: bool = False
+    footer_rows: int = 3
 
 
 def normalize_live_input(parts: list[str]) -> tuple[list[str] | None, str]:
@@ -89,7 +93,7 @@ def normalize_live_input(parts: list[str]) -> tuple[list[str] | None, str]:
     resources, fields, unknown = parse_query(low)
     if unknown and not resources and not fields:
         return None, f"don't know “{' '.join(unknown)}” — try: cpu gpu ram temps disk net"
-    kept = [t for t in low if t in ALIASES or t in FIELD_ALIASES]
+    kept = [t for t in low if is_known_token(t)]
     if not kept:
         return None, "type a hardware word: cpu gpu ram temps disk net…"
     if not query_is_liveable(kept):
@@ -200,24 +204,36 @@ def _layout_frame(
     max_board = max(1, chrome_row - 2)
 
     raw = _build_board(state, render_once, color)
-    lines = raw.splitlines()[:max_board]
+    width = term_width()
+    lines = [_fit_line(ln, width) for ln in raw.splitlines()[:max_board]]
     return "\n".join(lines), chrome, chrome_row
 
 
 def _paint_all(state: LiveState, render_once: Callable[..., str], color: bool) -> None:
-    """One full-screen frame — avoids split board/chrome drift and stale rows."""
+    """Pin the footer to the bottom; fill the board above it."""
     board, chrome, chrome_row = _layout_frame(state, render_once, color)
     state.chrome_row = chrome_row
-    frame = f"{board}\n\n{chrome}" if board else chrome
-    paint_frame(frame)
+    state.footer_rows = _footer_line_count(state)
+    paint_board_region(board, chrome_row)
+    paint_chrome_region(chrome_row, chrome)
+    state.board_fp = _board_fingerprint(state)
+    state.painted = True
+
+
+def _paint_board(state: LiveState, render_once: Callable[..., str], color: bool) -> None:
+    """Value tick: rewrite meters only, leave the prompt alone."""
+    board, _chrome, chrome_row = _layout_frame(state, render_once, color)
+    state.chrome_row = chrome_row
+    paint_board_region(board, chrome_row)
     state.board_fp = _board_fingerprint(state)
     state.painted = True
 
 
 def _paint_chrome(state: LiveState, color: bool) -> None:
     footer_rows = _footer_line_count(state)
+    state.footer_rows = footer_rows
     state.chrome_row = max(1, term_height() - footer_rows + 1)
-    paint_from_row(state.chrome_row, _build_chrome(state, color))
+    paint_chrome_region(state.chrome_row, _build_chrome(state, color))
 
 
 def _apply_fetch_result(state: LiveState, payload: dict | None, timed_out: bool) -> str:
@@ -313,7 +329,7 @@ def run_interactive_live(
                 state.need_full = False
                 _paint_all(state, render_once, color)
             elif paint == "board":
-                _paint_all(state, render_once, color)
+                _paint_board(state, render_once, color)
 
             if quit_live:
                 break
@@ -339,7 +355,10 @@ def run_interactive_live(
             if action == "full":
                 continue
             if action == "chrome":
-                _paint_chrome(state, color)
+                if _footer_line_count(state) != state.footer_rows:
+                    _paint_all(state, render_once, color)
+                else:
+                    _paint_chrome(state, color)
     except KeyboardInterrupt:
         pass
     finally:

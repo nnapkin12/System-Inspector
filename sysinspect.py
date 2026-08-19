@@ -19,10 +19,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.format import format_human  # noqa: E402
+from backend.help_text import FULL_HELP  # noqa: E402
 from backend.live_loop import run_interactive_live, run_piped_live  # noqa: E402
 from backend.live_mode import should_enter_live  # noqa: E402
+from backend.query import parse_query  # noqa: E402
 from backend.redact import redact_payload  # noqa: E402
-from backend.resources import list_commands_help, parse_query, run_query  # noqa: E402
+from backend.resources import run_query  # noqa: E402
 from backend.tui import (  # noqa: E402
     banner,
     decorate_human,
@@ -32,20 +34,23 @@ from backend.tui import (  # noqa: E402
 )
 
 
+def _print_help(*, color: bool, plain: bool) -> None:
+    if not plain:
+        print(banner(color=color))
+        print()
+    print(FULL_HELP)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    plain = "--plain" in argv or "-p" in argv
-    verbose = "--verbose" in argv or "-v" in argv or "--all" in argv
-    argv = [a for a in argv if a not in ("--plain", "-p", "--verbose", "-v", "--all")]
-    color = use_color(not plain)
-
-    if not argv or argv[0] in ("-h", "--help", "help"):
-        if not plain:
-            print(banner(color=color))
-            print()
-        print(list_commands_help())
-        return 0
+    force_live = False
+    force_graph = False
+    if argv and argv[0].lower() in ("watch", "graph", "live"):
+        if argv[0].lower() == "graph":
+            force_graph = True
+        force_live = True
+        argv = argv[1:]
 
     parser = argparse.ArgumentParser(
         prog="sysinspect",
@@ -74,42 +79,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--graph",
         action="store_true",
-        help="Watch: also draw line charts (default is large bar meters only)",
+        help="Watch: also draw sparklines (default is large bar meters only)",
     )
     parser.add_argument(
         "--no-logo",
         action="store_true",
         help="Hide the SI ASCII logo header (shown by default on human output)",
     )
+    parser.add_argument("--plain", "-p", action="store_true", help="No color or meters")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Extra JSON fields")
+    parser.add_argument("--all", action="store_true", help="Same as --verbose")
     parser.add_argument("--help", "-h", action="store_true")
 
-    force_live = False
-    force_graph = False
-    if argv and argv[0].lower() in ("watch", "graph", "live"):
-        if argv[0].lower() == "graph":
-            force_graph = True
-        force_live = True
-        argv = argv[1:]
-
     args, unknown = parser.parse_known_args(argv)
-    if args.help:
-        if not plain:
-            print(banner(color=color))
-            print()
-        print(list_commands_help())
-        return 0
+    plain = args.plain
+    verbose = args.verbose or args.all
+    color = use_color(not plain)
 
     tokens = list(args.tokens) + list(unknown)
     tokens = [t for t in tokens if not t.startswith("-")]
-
     if force_live and not tokens:
         tokens = ["status"]
-
-    if not tokens:
-        if not plain:
-            print(banner(color=color))
-            print()
-        print(list_commands_help())
+    if args.help or not tokens or [t.lower() for t in tokens] == ["help"]:
+        _print_help(color=color, plain=plain)
         return 0
 
     show_graph = bool(force_graph or args.graph) and not plain

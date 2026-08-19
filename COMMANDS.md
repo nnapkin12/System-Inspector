@@ -1,4 +1,13 @@
-# Commands — System Inspector
+you:~$ si
+  ░██████                  ░██████            SYSTEM INSPECTOR  ·  local live vitals and hardware
+ ░██   ░██                   ░██              · offline · Ctrl+C stops live
+░██                          ░██
+ ░████████                   ░██
+        ░██                  ░██
+ ░██   ░██                   ░██
+  ░██████  SYSTEM          ░██████ INSPECT
+
+────────────────────────────────────────────────────────────────────────
 
 (read the installation guide in README).
 
@@ -56,7 +65,7 @@ Use `si all --json` for a full machine dump (terminal default is JSON-heavy).
 
 Also works:
 
-| You type | Same as |
+| Second Name| Original |
 |----------|---------|
 | `summary` | `status` |
 | `temp`, `thermal`, `temperature` | `temps` |
@@ -116,10 +125,10 @@ Field words (use after a component):
 Local network info — interfaces, IPs, connections, DNS, routing, WiFi. Everything here is read from your machine except `public` (needs a internet lookup).
 
 ```bash
-si net                  # overview (speed, gateway, DNS, IPv4)
-si net connections      # connections to your pc one line per process --verbose for every socket
+si net                  # overview (speed, gateway, DNS, IPv4 / IPv6)
+si net connections      # connections to your pc — every socket
 si net ip               # IPv4 / IPv6 addresses per interface
-si net wifi             # WiFi SSID / signal (nmcli)
+si net wifi             # connected SSID + nearby networks (nmcli)
 ```
 
 More:
@@ -134,7 +143,7 @@ si net public           # your public IP (needs internet)
 
 Also works:
 
-| You type | Same as |
+| Second Name | Original |
 |----------|---------|
 | `network`, `eth` | `net` |
 | `ips`, `ipv4`, `ipv6`, `addresses` | `net ip` |
@@ -164,7 +173,7 @@ si net --once           # one snapshot
 
 ## Live terminal refresh (default for sensors)
 
-On an interactive terminal, sensor commands refresh every **1 second**. You do not need `si live`.
+On an interactive terminal, sensor commands refresh every **1 second**. do not need `si live`.
 
 ```bash
 si status                     # overview
@@ -178,7 +187,7 @@ si gpu --interval 0.5         # faster refresh (0.5s)
 si gpu --once                 # one snapshot
 ```
 
-These stay one-shot: `si os`, `si motherboard`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
+These are one snapshot: `si os`, `si motherboard`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
 
 `si live …` is still accepted.
 
@@ -198,7 +207,7 @@ You can change which component you're monitoring while it's live — instead of 
 | `temps` | temperatures |
 | `ram` / `disk` / `net` | those meters |
 | `status` or `clear` | back to overview |
-| `graph` | toggle line charts |
+| `graph` | toggle sparklines |
 | `faster` / `slower` | change refresh speed |
 | `quit` | leave live mode |
 
@@ -210,7 +219,7 @@ Shortcuts:
 - 'Esc' — clear what you were typing
 - 'Ctrl+C' — quit
 
-### Line charts (optional — not default)
+### Sparklines (optional — not default)
 
 ```bash
 si graph temps
@@ -230,10 +239,10 @@ Add these to any command:
 | `--plain` or `-p` | plain text only (no colors / banner / meters) |
 | `--json` or `-j` | machine-readable JSON for scripts |
 | `--redact` | mask serials, UUIDs, boot_id, sku, asset tags (logs / sharing) |
-| `--verbose` or `-v` | every network socket (`si net connections --verbose`) |
+| `--verbose` or `-v` | extra JSON fields (connections always list every socket) |
 | `--once` | one snapshot even for sensors (cpu, gpu, temps, …) |
 | `--interval 0.5` | live update every half second |
-| `--graph` | add line charts in live mode |
+| `--graph` | add sparklines in live mode |
 | `--no-logo` | hide the System Inspector ASCII header (shown by default) |
 | `--pci` | with `si scan`, list more PCI devices (long) |
 
@@ -243,7 +252,7 @@ si gpu --json
 si gpu --no-logo
 si scan --json --redact
 si scan --pci
-si net connections --verbose
+si net connections --json
 si cpu gpu --interval 0.5 --graph
 si live cpu gpu --graph
 ```

@@ -21,14 +21,13 @@ case "${1:-}" in
 esac
 
 cd "$ROOT"
-chmod +x "$ROOT/sysinspect" "$ROOT/si" 2>/dev/null || true
+chmod +x "$ROOT/sysinspect" "$ROOT/si" "$ROOT/setup-venv.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+source "$ROOT/setup-venv.sh"
 
 echo "→ Setting up Python virtualenv + dependencies…"
-if [[ ! -d .venv ]]; then
-  python3 -m venv .venv
-fi
-.venv/bin/pip install -q -U pip
-.venv/bin/pip install -q -r requirements.txt
+ensure_venv
+install_python_deps
 
 echo "→ Installing CLI to $BIN_DIR …"
 mkdir -p "$BIN_DIR"

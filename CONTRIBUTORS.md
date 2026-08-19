@@ -1,6 +1,6 @@
 # Contributors
 
-- [Human author of this project](github.com/nnapkin12) (repo owner)
-- [Cursor](https://cursor.com) — AI 
+- [nnapkin12](https://github.com/nnapkin12) — author and maintainer
+- [Cursor](https://cursor.com) — AI coding agent
 
-This project was built with human direction and an AI coding agent in Cursor.
+This project is started by me A lot of the implementation is written with ai

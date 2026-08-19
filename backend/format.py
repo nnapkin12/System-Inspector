@@ -10,7 +10,18 @@ from backend.fields import NET_DETAIL_FIELDS, OS_DETAIL_FIELDS
 
 # Sort connections/listeners: worst health first
 _HEALTH_SORT = {"bad": 0, "warn": 1, "good": 2, "unknown": 3}
-_HEALTH_RANK = {"bad": 3, "warn": 2, "good": 1, "unknown": 0}
+
+_CPU_TEMP_MARKERS = ("k10temp", "coretemp", "cpu", "tctl", "tdie", "package id")
+_GPU_TEMP_MARKERS = ("nv_temp", "nvidia", "amdgpu", "radeon", "nouveau")
+
+
+def _is_cpu_or_gpu_temp_label(label: str, gpu_names: set[str]) -> bool:
+    low = (label or "").lower()
+    if any(m in low for m in _CPU_TEMP_MARKERS):
+        return True
+    if any(m in low for m in _GPU_TEMP_MARKERS):
+        return True
+    return any(name and name in low for name in gpu_names)
 
 
 def pct(v: Any) -> str:
@@ -104,6 +115,11 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             return f"CPU  {d.get('name') or '—'}"
         if fields == {"usage"}:
             return f"CPU load  {pct(d.get('usage_percent'))}  ·  load1 {d.get('load_1m')}"
+        per = d.get("usage_per_core") or []
+        per_s = ""
+        if per:
+            bits = "  ".join(pct(x) for x in per)
+            per_s = f"\n  Each   {bits}"
         return (
             f"CPU  {d.get('name') or '—'}\n"
             f"  Load   {pct(d.get('usage_percent'))}\n"
@@ -111,6 +127,7 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             f"  Freq   {d.get('freq_current_mhz') or '—'} MHz  (max {d.get('freq_max_mhz') or '—'})\n"
             f"  Temp   {deg(d.get('temp_c'))}\n"
             f"  Load1  {d.get('load_1m')}"
+            f"{per_s}"
         )
 
     if r == "gpu":
@@ -180,11 +197,21 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
 
     if r == "temps":
         lines = [f"CPU {deg(d.get('cpu_c'))}"]
+        gpu_names: set[str] = set()
         for g in d.get("gpus") or []:
+            name = short_gpu(g.get("name"))
+            gpu_names.add((name or "").lower())
             if g.get("temp_c") is None and g.get("note"):
-                lines.append(f"GPU {short_gpu(g.get('name'))}  {g.get('note')}")
+                lines.append(f"GPU {name}  {g.get('note')}")
             else:
-                lines.append(f"GPU {short_gpu(g.get('name'))}  {deg(g.get('temp_c'))}")
+                lines.append(f"GPU {name}  {deg(g.get('temp_c'))}")
+        for s in d.get("all_sensors") or []:
+            label = (s.get("label") or s.get("sensor") or "sensor").strip()
+            if _is_cpu_or_gpu_temp_label(label, gpu_names):
+                continue
+            if s.get("celsius") is None:
+                continue
+            lines.append(f"{label}  {deg(s.get('celsius'))}")
         return "\n".join(lines)
 
     if r == "fans":
@@ -206,11 +233,17 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
         sys_ = d.get("system") or {}
         mb = d.get("motherboard") or {}
         bios = d.get("bios") or {}
-        return (
-            f"Machine       {sys_.get('name') or '—'}\n"
-            f"Motherboard   {mb.get('name') or '—'}\n"
-            f"BIOS          {bios.get('name') or bios.get('version') or '—'}"
-        )
+        chassis = d.get("chassis") or {}
+        lines = [
+            f"Machine       {sys_.get('name') or '—'}",
+            f"Motherboard   {mb.get('name') or '—'}",
+            f"BIOS          {bios.get('name') or bios.get('version') or '—'}",
+        ]
+        if bios.get("date"):
+            lines.append(f"BIOS date     {bios.get('date')}")
+        if chassis.get("name") and chassis.get("name") != "Chassis":
+            lines.append(f"Chassis       {chassis.get('name')}")
+        return "\n".join(lines)
 
     if r == "os":
         # Filtered one-liners
@@ -249,10 +282,12 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
                 f"  {disk.get('name') or disk.get('device')}  "
                 f"{disk.get('size_gb')} GB  {disk.get('media') or ''}".rstrip()
             )
-        for p in (d.get("partitions") or [])[:8]:
+        for p in d.get("partitions") or []:
+            fs = p.get("fstype") or ""
+            fs_s = f"  {fs}" if fs else ""
             lines.append(
                 f"  {p.get('mountpoint') or p.get('device')}  "
-                f"{p.get('percent')}%  ·  {p.get('used_gb')}/{p.get('total_gb')} GB"
+                f"{p.get('percent')}%  ·  {p.get('used_gb')}/{p.get('total_gb')} GB{fs_s}"
             )
         rates = d.get("rates_mbs") or {}
         if rates:
@@ -287,58 +322,32 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
 
             block = d.get("connections") or {}
             lines: list[str] = []
-            if block.get("note") and "Showing" in str(block.get("note")):
+            if block.get("note"):
                 lines.append(f"  {block.get('note')}")
-            conns = block.get("connections") or []
-            show_sockets = verbose
-
-            if not show_sockets and conns:
-                groups: dict[str, list[dict]] = {}
-                for conn in conns:
-                    proc = conn.get("process")
-                    if not proc or proc == "?":
-                        continue
-                    groups.setdefault(proc.lower(), []).append(conn)
-                rows_out: list[tuple[int, str, str]] = []
-                for proc, items in groups.items():
-                    worst = max(
-                        items,
-                        key=lambda c: _HEALTH_RANK.get(c.get("health") or "unknown", 0),
-                    )
-                    health = worst.get("health") or "unknown"
-                    pids = sorted({c.get("pid") for c in items if c.get("pid") is not None})
-                    if len(pids) == 1:
-                        pid_s = f"pid {pids[0]}"
-                    elif pids:
-                        pid_s = f"{len(pids)} processes"
-                    else:
-                        continue
-                    n = len(items)
-                    word = "connection" if n == 1 else "connections"
-                    row = f"  {proc:18} ({pid_s})   {n} {word}"
-                    rows_out.append((_HEALTH_SORT.get(health, 9), row, health))
-                for _, row, health in sorted(rows_out, key=lambda x: (x[0], x[1])):
-                    lines.append(paint_health(row, health, color=color))
-            elif show_sockets:
-                conns = sorted(
-                    conns,
-                    key=lambda c: (
-                        _HEALTH_SORT.get(c.get("health") or "unknown", 9),
-                        c.get("process") or "",
-                        c.get("remote") or "",
-                    ),
+            conns = list(block.get("connections") or [])
+            if conns:
+                n = block.get("total") or len(conns)
+                word = "connection" if n == 1 else "connections"
+                lines.append(f"  {n} {word}")
+            conns = sorted(
+                conns,
+                key=lambda c: (
+                    _HEALTH_SORT.get(c.get("health") or "unknown", 9),
+                    c.get("process") or "",
+                    c.get("remote") or "",
+                ),
+            )
+            for conn in conns:
+                proc = conn.get("process") or "?"
+                pid = conn.get("pid")
+                pid_s = f"pid {pid}" if pid else "pid —"
+                health = conn.get("health") or "unknown"
+                row = (
+                    f"  {conn.get('type') or 'TCP':4}  {conn.get('local') or '—':22} → "
+                    f"{conn.get('remote') or '—':22}  {conn.get('status') or '—':12}  "
+                    f"{proc} ({pid_s})"
                 )
-                for conn in conns:
-                    proc = conn.get("process") or "?"
-                    pid = conn.get("pid")
-                    pid_s = f"pid {pid}" if pid else "pid —"
-                    health = conn.get("health") or "unknown"
-                    row = (
-                        f"  {conn.get('type') or 'TCP':4}  {conn.get('local') or '—':22} → "
-                        f"{conn.get('remote') or '—':22}  {conn.get('status') or '—':12}  "
-                        f"{proc} ({pid_s})"
-                    )
-                    lines.append(paint_health(row, health, color=color))
+                lines.append(paint_health(row, health, color=color))
             return "\n".join(lines) if lines else "  (none)"
 
         if net_fields == {"listen"}:
@@ -346,7 +355,7 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
 
             block = d.get("listeners") or {}
             lines: list[str] = []
-            if block.get("note") and "Showing" in str(block.get("note")):
+            if block.get("note"):
                 lines.append(f"  {block.get('note')}")
             listeners = sorted(
                 block.get("listeners") or [],
@@ -356,6 +365,10 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
                     r.get("address") or "",
                 ),
             )
+            if listeners:
+                n = block.get("total") or len(listeners)
+                word = "listener" if n == 1 else "listeners"
+                lines.append(f"  {n} {word}")
             for row in listeners:
                 proc = row.get("process") or "?"
                 pid = row.get("pid")
@@ -397,8 +410,18 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
                 else:
                     wifi_health = "bad"
                 line = f"  {active.get('ssid')}  ·  {sig_s}  ·  {sec}"
-                return paint_health(line, wifi_health, color=color)
-            return f"  {active.get('ssid') or '—'}"
+                lines = [paint_health(line, wifi_health, color=color)]
+            else:
+                lines = [f"  {active.get('ssid') or '—'}"]
+            nearby = [n for n in (block.get("networks") or []) if not n.get("active") and n.get("ssid")]
+            if nearby:
+                lines.append("  nearby")
+                for n in nearby:
+                    sig = n.get("signal")
+                    sig_s = f"{sig}%" if sig is not None else "—"
+                    sec = n.get("security") or "—"
+                    lines.append(f"    {n.get('ssid')}  ·  {sig_s}  ·  {sec}")
+            return "\n".join(lines)
 
         if net_fields == {"public"}:
             block = d.get("public") or {}
@@ -415,12 +438,12 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             lines.append(f"  gateway  {gw.get('gateway')}  ·  iface {gw.get('interface') or '—'}")
         dns = d.get("dns") or {}
         if dns.get("servers"):
-            lines.append(f"  DNS      {', '.join(dns.get('servers')[:3])}")
+            lines.append(f"  DNS      {', '.join(dns.get('servers'))}")
         for row in d.get("addresses") or []:
-            if row.get("family") == "ipv6":
-                continue
+            fam = row.get("family") or "ip"
+            iface = (row.get("interface") or "—")[:10]
             lines.append(
-                f"  {row.get('interface'):10}  {row.get('address')}  /{row.get('netmask') or '—'}"
+                f"  {iface:10}  {fam:5}  {row.get('address')}  /{row.get('netmask') or '—'}"
             )
         return "\n".join(lines)
 
@@ -430,7 +453,9 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
         plug = "AC" if d.get("power_plugged") else "battery"
         level = d.get("percent")
         pct_s = f"{int(round(float(level)))}%" if level is not None else "—"
-        return f"Battery  {pct_s}  ·  {plug}"
+        left = d.get("secs_left")
+        extra = f"  ·  {fmt_uptime(left)} left" if left else ""
+        return f"Battery  {pct_s}  ·  {plug}{extra}"
 
     if r == "scan":
         s = d.get("summary") or {}
@@ -442,10 +467,67 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             f"  RAM   {s.get('ram_gb')} GB",
             f"  Items {counts.get('total_components')}",
         ]
+        order = (
+            "cpu",
+            "gpu",
+            "memory",
+            "disk",
+            "partition",
+            "network",
+            "network_controller",
+            "motherboard",
+            "system",
+            "bios",
+            "chassis",
+            "os",
+        )
+        by_cat: dict[str, list[dict]] = {}
+        for item in d.get("components") or []:
+            cat = str(item.get("category") or "other")
+            by_cat.setdefault(cat, []).append(item)
+        for cat in order:
+            items = by_cat.pop(cat, [])
+            if not items:
+                continue
+            for item in items:
+                name = item.get("name") or item.get("device") or item.get("mountpoint") or "—"
+                lines.append(f"  {cat:12}  {name}")
+        for cat in sorted(by_cat):
+            for item in by_cat[cat]:
+                name = item.get("name") or item.get("device") or "—"
+                lines.append(f"  {cat:12}  {name}")
         return "\n".join(lines)
 
     if r == "all":
-        # compact dump of nested
-        return json.dumps(d, indent=2)
+        parts: list[str] = []
+        for name in (
+            "status",
+            "cpu",
+            "gpu",
+            "memory",
+            "temps",
+            "board",
+            "os",
+            "disk",
+            "net",
+            "battery",
+            "fans",
+            "uptime",
+            "version",
+        ):
+            section = d.get(name)
+            if section is None:
+                continue
+            if isinstance(section, dict) and section.get("ok") is False:
+                parts.append(format_human(section, color=color, verbose=verbose))
+                continue
+            parts.append(
+                format_human(
+                    {"ok": True, "resource": name, "data": section},
+                    color=color,
+                    verbose=verbose,
+                )
+            )
+        return "\n\n".join(parts) if parts else json.dumps(d, indent=2)
 
     return json.dumps(payload, indent=2)

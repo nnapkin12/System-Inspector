@@ -8,8 +8,10 @@ import time
 from concurrent import futures
 from typing import Any
 
-from backend.snapshot import Snapshot
+from backend import resources as resources_mod
 from backend.collectors.vitals import VITALS_ALL
+from backend.query import vitals_needs_for_tokens
+from backend.snapshot import Snapshot
 
 LIVE_QUERY_TIMEOUT = 2.5
 INVENTORY_TTL = 30.0
@@ -103,8 +105,6 @@ def _submit_query(
     kwargs: dict[str, Any],
 ) -> None:
     """Start a worker if none is running."""
-    from backend.resources import run_query, vitals_needs_for_tokens
-
     global _fut, _fut_key, _fut_started
     key = _query_key(tokens, kwargs)
     needs = vitals_needs_for_tokens(tokens)
@@ -117,7 +117,7 @@ def _submit_query(
                 verbose=bool(kwargs.get("verbose", False)),
                 vitals_needs=needs,
             )
-        result = run_query(tokens, snap=snap, **kwargs)
+        result = resources_mod.run_query(tokens, snap=snap, **kwargs)
         if cache is not None and snap is not None:
             cache.remember(snap)
         return result

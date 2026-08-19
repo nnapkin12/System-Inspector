@@ -15,7 +15,7 @@ cd System-Inspector
 ./install.sh
 ```
 
-`./install.sh` puts `si` and `sysinspect` into `~/.local/bin`.
+`./install.sh` puts `si` and `sysinspect` into `~/.local/bin`. If `nvidia-smi` is on PATH, it also installs NVIDIA's Python NVML bindings; AMD/Intel machines skips.
 
 If you get **command not found**, add that folder to your PATH once, then open a new terminal:
 
@@ -62,7 +62,7 @@ si cpu load
 
 ### Live terminal refresh (default on a TTY)
 
-Sensors update by themselves. Facts like `si os` / `si scan` print once.
+Sensors update by themselves. others like `si os` / `si scan` print once.
 
 ```bash
 si gpu                        # live GPU board
@@ -79,11 +79,11 @@ si gpu --once                 # one snapshot
 ## Network
 
 ```bash
-si net                  # speed, gateway, DNS, your IP
-si net connections      # active connections to your pc
+si net                  # speed, gateway, DNS, IPv4 / IPv6
+si net connections      # every socket (process, local → remote)
 si net listen           # listening ports
 si net ip               # addresses per interface
-si net wifi             # SSID + signal (laptops)
+si net wifi             # connected SSID + nearby networks
 si net public           # public IP (needs internet)
 ```
 
@@ -95,7 +95,7 @@ More commands: [COMMANDS.md](COMMANDS.md)
 
 ## Scripts / JSON
 
-JSON straight from the CLI:
+if you want JSON outputs instead:
 
 ```bash
 si gpu --json
@@ -103,11 +103,22 @@ si net connections --json
 si scan --json --redact
 ```
 
-`--redact` masks serials, UUIDs, boot_id, sku, and asset tags before printing (useful when sharing logs).
+`--redact` masks serials, UUIDs, boot_id, sku, and asset tags before printing.
 
 Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph` · `--no-logo` · `--pci`
 
-json for pretty much anything i just didnt want to type 20 examples
+`--json` works on any command.
+
 ---
+
+## Dev
+
+```bash
+./install.sh
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest
+```
+
+Layout: [ARCHITECTURE.md](ARCHITECTURE.md). Credits: [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 Local only · [MIT](LICENSE)

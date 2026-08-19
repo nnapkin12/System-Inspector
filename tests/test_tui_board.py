@@ -19,6 +19,31 @@ def test_meter_block_has_number_and_bar():
     assert sum(1 for line in lines if "[" in line) == 2
 
 
+def test_meter_block_fits_narrow_terminal(monkeypatch):
+    monkeypatch.setattr("backend.tui.term_width", lambda: 40)
+    from backend.tui import default_bar_width, strip_ansi
+
+    width = default_bar_width()
+    lines = meter_block(40, width=width, color=False, rows=1)
+    for line in lines:
+        assert len(strip_ansi(line)) <= 40
+
+
+def test_watch_dashboard_lines_fit_terminal(monkeypatch):
+    monkeypatch.setattr("backend.tui.term_width", lambda: 80)
+    monkeypatch.setattr("backend.tui.term_height", lambda: 24)
+    from backend.tui import strip_ansi
+
+    payload = {
+        "ok": True,
+        "resource": "cpu",
+        "data": {"usage_percent": 10, "temp_c": 72, "freq_current_mhz": 4200},
+    }
+    out = format_watch_dashboard(payload, color=False)
+    for line in out.splitlines():
+        assert len(strip_ansi(line)) <= 80
+
+
 def test_watch_dashboard_shows_big_temp():
     payload = {
         "ok": True,

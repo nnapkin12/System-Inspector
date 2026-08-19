@@ -1,4 +1,5 @@
-from backend.resources import apply_fields, parse_query, run_query
+from backend.query import parse_query
+from backend.resources import apply_fields, run_query
 
 
 def test_parse_gpu_temp():

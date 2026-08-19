@@ -10,9 +10,6 @@ import psutil
 
 from .util import read_text, run_cmd, safe_dict
 
-_CONN_LIMIT = 80
-_LISTEN_LIMIT = 60
-
 
 def _family_label(family: Any) -> str:
     return str(family).replace("AddressFamily.", "")
@@ -285,7 +282,7 @@ def _listener_health(address: str | None, process: str | None) -> str:
     return base
 
 
-def collect_connections(limit: int | None = _CONN_LIMIT) -> dict:
+def collect_connections(limit: int | None = None) -> dict:
     try:
         conns = psutil.net_connections(kind="inet")
     except (psutil.Error, PermissionError, OSError) as exc:
@@ -356,7 +353,7 @@ def collect_connections(limit: int | None = _CONN_LIMIT) -> dict:
     )
 
 
-def collect_listeners(limit: int = _LISTEN_LIMIT) -> dict:
+def collect_listeners(limit: int | None = None) -> dict:
     try:
         conns = psutil.net_connections(kind="inet")
     except (psutil.Error, PermissionError, OSError) as exc:
@@ -389,7 +386,7 @@ def collect_listeners(limit: int = _LISTEN_LIMIT) -> dict:
     rows.sort(key=lambda r: (r.get("process") or "", r.get("address") or ""))
     total = len(rows)
     note = None
-    if total > limit:
+    if limit is not None and total > limit:
         note = f"Showing {limit} of {total} listening sockets."
         rows = rows[:limit]
     elif not rows:
@@ -542,7 +539,7 @@ def collect_wifi() -> dict:
             return safe_dict(
                 available=True,
                 active=active,
-                networks=networks[:20],
+                networks=networks,
                 source="nmcli",
             )
 
