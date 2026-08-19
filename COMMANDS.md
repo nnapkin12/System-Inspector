@@ -153,28 +153,34 @@ Notes:
 - `wifi` uses NetworkManager (`nmcli`) when available.
 - `public` calls a simple IP service over HTTPS — the only command here that uses the internet.
 
-Live monitoring:
+Live monitoring (default on a TTY):
 
 ```bash
-si live net             # upload/download meters
+si net                  # upload/download meters (live)
+si net --once           # one snapshot
 ```
 
 ---
 
-## Live terminal refresh (monitor metrics)
+## Live terminal refresh (default for sensors)
 
-Live bars that refresh in the terminal (default: every **1 second**):
+On an interactive terminal, sensor commands refresh every **1 second**. You do not need `si live`.
 
 ```bash
-si live                       # overview
-si live gpu load              # GPU load
-si live gpu temps             # GPU temperature
-si live gpu cpu temps         # combine multiple components and metrics
-si live cpu gpu               # CPU + GPU load and temps
-si live temps                 # temperatures only
-si live gpu                   # GPU only
-si live gpu --interval 0.5    # faster refresh (0.5s)
+si status                     # overview
+si gpu load                   # GPU load
+si gpu temps                  # GPU temperature
+si gpu cpu temps              # combine multiple components and metrics
+si cpu gpu                    # CPU + GPU load and temps
+si temps                      # temperatures only
+si gpu                        # GPU only
+si gpu --interval 0.5         # faster refresh (0.5s)
+si gpu --once                 # one snapshot
 ```
+
+These stay one-shot: `si os`, `si motherboard`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
+
+`si live …` is still accepted.
 
 Speed up monitoring, or type `faster` / `slower` then Enter while it's live.
 
@@ -225,17 +231,21 @@ Add these to any command:
 | `--json` or `-j` | machine-readable JSON for scripts |
 | `--redact` | mask serials, UUIDs, boot_id, sku, asset tags (logs / sharing) |
 | `--verbose` or `-v` | every network socket (`si net connections --verbose`) |
+| `--once` | one snapshot even for sensors (cpu, gpu, temps, …) |
 | `--interval 0.5` | live update every half second |
 | `--graph` | add line charts in live mode |
+| `--no-logo` | hide the System Inspector ASCII header (shown by default) |
 | `--pci` | with `si scan`, list more PCI devices (long) |
 
 ```bash
 si status --plain
 si gpu --json
+si gpu --no-logo
 si scan --json --redact
 si scan --pci
 si net connections --verbose
-si live cpu gpu --interval 0.5 --graph
+si cpu gpu --interval 0.5 --graph
+si live cpu gpu --graph
 ```
 
 ---

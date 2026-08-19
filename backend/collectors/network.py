@@ -579,3 +579,30 @@ def collect_public_ip() -> dict:
         requires_network=True,
         note="Could not reach a public IP service (needs internet).",
     )
+
+
+NET_STATIC_TTL = 30.0
+_net_static_cache: dict | None = None
+_net_static_at: float = 0.0
+
+
+def collect_net_static(*, ttl: float = NET_STATIC_TTL) -> dict:
+    """Gateway, DNS, and addresses — cached for live `si net` ticks."""
+    global _net_static_cache, _net_static_at
+    now = time.monotonic()
+    if _net_static_cache is not None and (now - _net_static_at) < ttl:
+        return _net_static_cache
+    data = {
+        "addresses": collect_ip_addresses(),
+        "gateway": collect_gateway(),
+        "dns": collect_dns(),
+    }
+    _net_static_cache = data
+    _net_static_at = now
+    return data
+
+
+def reset_net_static_cache_for_tests() -> None:
+    global _net_static_cache, _net_static_at
+    _net_static_cache = None
+    _net_static_at = 0.0

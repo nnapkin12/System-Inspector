@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from backend.collectors import get_inventory, get_vitals
+from backend.collectors.vitals import VITALS_ALL
 
 
 @dataclass
 class Snapshot:
     include_pci: bool = False
     verbose: bool = False
+    vitals_needs: frozenset[str] = field(default_factory=lambda: VITALS_ALL)
     _inventory: dict | None = field(default=None, repr=False)
     _vitals: dict | None = field(default=None, repr=False)
     _net_connections: dict | None = field(default=None, repr=False)
@@ -19,6 +21,14 @@ class Snapshot:
     _net_wifi: dict | None = field(default=None, repr=False)
     _net_public: dict | None = field(default=None, repr=False)
 
+    def reuse_inventory(self, data: dict) -> None:
+        """Use a previously collected inventory (live ticks skip lspci/DMI)."""
+        self._inventory = data
+
+    def peek_inventory(self) -> dict | None:
+        """Inventory if already loaded this query; does not collect."""
+        return self._inventory
+
     def inventory(self) -> dict:
         if self._inventory is None:
             self._inventory = get_inventory(include_pci=self.include_pci)
@@ -26,7 +36,7 @@ class Snapshot:
 
     def vitals(self) -> dict:
         if self._vitals is None:
-            self._vitals = get_vitals()
+            self._vitals = get_vitals(self.vitals_needs)
         return self._vitals
 
     def net_connections(self) -> dict:

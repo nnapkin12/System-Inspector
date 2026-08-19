@@ -61,25 +61,31 @@ Stuck?  si help
   connections/listen may need sudo for full process names on some systems.
   connections are color-coded (green / yellow / red).
 
-── Live refresh (default 1s) ───────────────────────────────
+── Live refresh (default on a TTY) ─────────────────────────
 
-  si live                   overview
-  si live gpu load          si live gpu temps
-  si live cpu gpu           si live net connections
-  si live gpu --interval 0.5
+  Sensors refresh by themselves. No need to type `live`:
 
-  While live: type cpu, gpu, temps, net, status to switch · faster/slower
-  · graph toggles charts · ? help · Esc clears typing · Ctrl+C quit
+  si gpu             si cpu temps         si status
+  si temps           si ram               si net
+
+  Snapshots (print once):  si os  si motherboard  si scan  si version
+                           si net public  si net connections
+  si gpu --once      one snapshot of a live-worthy command
+
+  `si live …` still works. While live: type cpu / gpu / temps to switch
+  · faster/slower · graph · ? help · Esc clears typing · Ctrl+C quit
 
 ── Flags ───────────────────────────────────────────────────
 
-  --plain / -p       no color or meters
-  --json / -j        JSON output
+  --plain / -p       no color or meters (also forces a snapshot)
+  --json / -j        JSON output (snapshot unless `si live … --json`)
+  --once             one snapshot even for sensors
   --redact           mask serials, UUIDs, boot_id, sku (sharing / logs)
   --verbose / -v     every socket (connections)
   --interval 0.5     live refresh speed
   --graph            line charts in live mode
+  --no-logo          hide the SI ASCII header (on by default)
   --pci              extra PCI detail with si scan
 
-  si gpu --json   si status --plain   si net connections --verbose
+  si gpu --json   si gpu --once   si status --plain   si gpu --no-logo
 """.strip()

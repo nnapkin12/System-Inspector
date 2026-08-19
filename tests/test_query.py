@@ -65,6 +65,22 @@ def test_apply_fields_cpu_temp():
     assert "usage_percent" not in out["data"]
 
 
+def test_apply_fields_cpu_temp_usage():
+    payload = {
+        "ok": True,
+        "resource": "cpu",
+        "data": {
+            "name": "Test CPU",
+            "temp_c": 55.0,
+            "usage_percent": 10,
+            "temperatures": [{"celsius": 55.0}],
+        },
+    }
+    out = apply_fields(payload, {"temp", "usage"})
+    assert out["data"]["temp"]["temp_c"] == 55.0
+    assert out["data"]["usage"]["usage_percent"] == 10
+
+
 def test_apply_fields_gpu_temp_keeps_note():
     payload = {
         "ok": True,

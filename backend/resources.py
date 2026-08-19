@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from backend.collectors import get_inventory
+from backend.collectors.vitals import VITALS_ALL
 from backend.fields import NET_DETAIL_FIELDS, NET_FIELD_ALIASES, OS_DETAIL_FIELDS
 from backend.snapshot import Snapshot
 from backend.collectors.gpu import normalize_pci_bdf, short_gpu_name as _short_gpu
 
-# Canonical resource → display name
 CANONICAL = (
     "status",
     "cpu",
@@ -91,6 +91,34 @@ ALIASES: dict[str, str] = {
     "everything": "all",
     "full": "all",
 }
+
+# Live vitals domains each resource actually reads (unioned for bundles).
+_RESOURCE_VITALS: dict[str, frozenset[str]] = {
+    "status": frozenset({"cpu", "memory", "gpus"}),
+    "cpu": frozenset({"cpu"}),
+    "gpu": frozenset({"gpus"}),
+    "memory": frozenset({"memory"}),
+    "temps": frozenset({"cpu", "gpus", "temperatures"}),
+    "fans": frozenset({"fans", "gpus"}),
+    "disk": frozenset({"storage", "rates"}),
+    "net": frozenset({"network", "rates"}),
+    "battery": frozenset({"battery"}),
+    "uptime": frozenset({"boot_time"}),
+}
+
+
+def vitals_needs_for(resources: list[str]) -> frozenset[str]:
+    """Minimal vitals domains for a live query — avoids full get_vitals() every tick."""
+    needs: set[str] = set()
+    for r in resources:
+        needs.update(_RESOURCE_VITALS.get(r, ()))
+    return frozenset(needs) if needs else VITALS_ALL
+
+
+def vitals_needs_for_tokens(tokens: list[str]) -> frozenset[str]:
+    resources, _fields, _unknown = parse_query(tokens)
+    return vitals_needs_for(resources)
+
 
 # Optional field tokens (combine with a resource, or alone for a few shortcuts)
 FIELD_ALIASES: dict[str, str] = {
@@ -633,8 +661,8 @@ def resource_disk(snap: Snapshot) -> dict:
     )
 
 
-def resource_net(snap: Snapshot, include_public: bool = False) -> dict:
-    from backend.collectors.network import collect_dns, collect_gateway, collect_ip_addresses
+def resource_net(snap: Snapshot) -> dict:
+    from backend.collectors.network import collect_net_static
 
     inv = snap.inventory()
     vit = snap.vitals()
@@ -644,20 +672,21 @@ def resource_net(snap: Snapshot, include_public: bool = False) -> dict:
         if c.get("category") in ("network", "network_controller")
     ]
     rates = vit.get("rates") or {}
-    payload = {
-        "interfaces": nets,
-        "rates_mbs": {
-            "recv": rates.get("net_recv_mbs"),
-            "sent": rates.get("net_sent_mbs"),
+    static = collect_net_static()
+    return _ok(
+        "net",
+        {
+            "interfaces": nets,
+            "rates_mbs": {
+                "recv": rates.get("net_recv_mbs"),
+                "sent": rates.get("net_sent_mbs"),
+            },
+            "totals": (vit.get("network") or {}).get("total"),
+            "addresses": static.get("addresses"),
+            "gateway": static.get("gateway"),
+            "dns": static.get("dns"),
         },
-        "totals": (vit.get("network") or {}).get("total"),
-        "addresses": collect_ip_addresses(),
-        "gateway": collect_gateway(),
-        "dns": collect_dns(),
-    }
-    if include_public:
-        payload["public"] = snap.net_public_ip()
-    return _ok("net", payload)
+    )
 
 
 def resource_battery(snap: Snapshot) -> dict:
@@ -759,8 +788,6 @@ def get_resource(name: str, snap: Snapshot, **kwargs: Any) -> dict:
         }
     if key == "scan":
         return handler(snap, include_pci=bool(kwargs.get("include_pci", False)))
-    if key == "net":
-        return handler(snap, include_public=bool(kwargs.get("include_public", False)))
     return handler(snap)
 
 
@@ -783,14 +810,15 @@ def apply_fields(payload: dict, fields: set[str], *, snap: Snapshot | None = Non
     elif resource == "net" and net_detail:
         filtered = _filter_net(data, fields, snap)
     else:
-        if "temp" in fields:
+        if "temp" in fields and "usage" in fields:
+            filtered = {
+                "temp": _filter_temp(resource, data),
+                "usage": _filter_usage(resource, data),
+            }
+        elif "temp" in fields:
             filtered = _filter_temp(resource, data)
-        if "usage" in fields:
-            filtered = _filter_usage(resource, filtered if "temp" not in fields else data)
-            if "temp" in fields:
-                t = _filter_temp(resource, data)
-                u = _filter_usage(resource, data)
-                filtered = {"temp": t, "usage": u}
+        elif "usage" in fields:
+            filtered = _filter_usage(resource, data)
         if "name" in fields and "temp" not in fields and "usage" not in fields and resource != "os":
             filtered = _filter_name(resource, data)
         if "name" in fields and resource == "os" and not os_detail - {"name"}:
@@ -831,24 +859,6 @@ def _filter_net(data: dict, fields: set[str], snap: Snapshot | None) -> dict:
     if "dns" in fields:
         out["dns"] = data.get("dns") or {}
     if snap is None:
-        from backend.collectors.network import (
-            collect_connections,
-            collect_listeners,
-            collect_public_ip,
-            collect_routes,
-            collect_wifi,
-        )
-
-        if "connections" in fields:
-            out["connections"] = collect_connections()
-        if "listen" in fields:
-            out["listeners"] = collect_listeners()
-        if "routes" in fields:
-            out["routes"] = collect_routes()
-        if "wifi" in fields:
-            out["wifi"] = collect_wifi()
-        if "public" in fields:
-            out["public"] = collect_public_ip()
         return out
 
     if "connections" in fields:
@@ -957,9 +967,11 @@ def _filter_summary(resource: str | None, data: Any) -> Any:
     return data
 
 
-def run_query(tokens: list[str], **kwargs: Any) -> dict:
+def run_query(tokens: list[str], *, snap: Snapshot | None = None, **kwargs: Any) -> dict:
     """
     Execute freeform tokens. Returns single resource payload or multi bundle.
+
+    Pass an existing Snapshot to reuse inventory across live ticks.
     """
     resources, fields, unknown = parse_query(tokens)
     if unknown and not resources:
@@ -978,10 +990,14 @@ def run_query(tokens: list[str], **kwargs: Any) -> dict:
             "hint": "Examples: gpu · cpu temp · temps · motherboard · status",
         }
 
-    snap = Snapshot(
-        include_pci=bool(kwargs.get("include_pci", False)),
-        verbose=bool(kwargs.get("verbose", False)),
-    )
+    if snap is None:
+        snap = Snapshot(
+            include_pci=bool(kwargs.get("include_pci", False)),
+            verbose=bool(kwargs.get("verbose", False)),
+            vitals_needs=vitals_needs_for(resources),
+        )
+    else:
+        snap.vitals_needs = vitals_needs_for(resources)
     results = []
     for r in resources:
         try:

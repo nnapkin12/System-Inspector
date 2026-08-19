@@ -60,16 +60,19 @@ si gpu load
 si cpu load
 ```
 
-### Live terminal refresh (monitor metrics)
+### Live terminal refresh (default on a TTY)
+
+Sensors update by themselves. Facts like `si os` / `si scan` print once.
 
 ```bash
-si live gpu load              # GPU load
-si live gpu temps             # GPU temperature
-si live gpu cpu temps         # Combine multiple components and metrics
-si live gpu --interval 0.5    # faster refresh / type 'faster' or 'slower' then Enter
+si gpu                        # live GPU board
+si cpu temps                  # live CPU temperature
+si gpu cpu temps              # combine components
+si gpu --interval 0.5         # faster refresh / type 'faster' or 'slower' then Enter
+si gpu --once                 # one snapshot
 ```
 
-While live mode is running, type `cpu`, `gpu`, or any component to switch — or type the full query like `net listen`.
+`si live …` still works. While it is running, type `cpu`, `gpu`, or any live component to switch.
 
 ---
 
@@ -102,7 +105,7 @@ si scan --json --redact
 
 `--redact` masks serials, UUIDs, boot_id, sku, and asset tags before printing (useful when sharing logs).
 
-Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph` · `--pci`
+Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph` · `--no-logo` · `--pci`
 
 json for pretty much anything i just didnt want to type 20 examples
 ---

@@ -1,9 +1,46 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
 from .util import read_text, run_cmd, safe_dict
+
+_nvml_lock = threading.Lock()
+_nvml_live = False
+
+
+def nvml_live_begin() -> None:
+    """Keep NVML open for live polling — avoids init/shutdown every tick."""
+    global _nvml_live
+    with _nvml_lock:
+        if _nvml_live:
+            return
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            _nvml_live = True
+        except Exception:
+            pass
+
+
+def nvml_live_end() -> None:
+    global _nvml_live
+    with _nvml_lock:
+        if not _nvml_live:
+            return
+        try:
+            import pynvml
+
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+        _nvml_live = False
+
+
+def reset_nvml_live_for_tests() -> None:
+    nvml_live_end()
 
 
 def normalize_pci_bdf(s: str | None) -> str | None:
@@ -207,10 +244,15 @@ def _nvidia_vitals() -> list[dict]:
         # Fall back to nvidia-smi once
         return _nvidia_smi_vitals()
 
-    try:
-        pynvml.nvmlInit()
-    except Exception:
-        return _nvidia_smi_vitals()
+    owns_session = False
+    with _nvml_lock:
+        live = _nvml_live
+    if not live:
+        try:
+            pynvml.nvmlInit()
+            owns_session = True
+        except Exception:
+            return _nvidia_smi_vitals()
 
     out: list[dict] = []
     try:
@@ -284,10 +326,11 @@ def _nvidia_vitals() -> list[dict]:
                 )
             )
     finally:
-        try:
-            pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        if owns_session:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     return out
 
 

@@ -203,63 +203,97 @@ def _gpu_fans(gpus: list[dict]) -> list[dict]:
     return out
 
 
-def get_vitals() -> dict:
-    """Live metrics for the dashboard (poll ~1s)."""
-    battery = None
-    if hasattr(psutil, "sensors_battery"):
-        bat = psutil.sensors_battery()
-        if bat is not None:
-            battery = safe_dict(
-                percent=bat.percent,
-                power_plugged=bat.power_plugged,
-                secs_left=bat.secsleft if bat.secsleft and bat.secsleft >= 0 else None,
-            )
+# Domains get_vitals() can collect. Live queries pass a subset so `si gpu`
+# does not scan every hwmon fan and psutil sensor every tick.
+VITALS_ALL = frozenset(
+    {
+        "cpu",
+        "memory",
+        "gpus",
+        "storage",
+        "network",
+        "rates",
+        "battery",
+        "fans",
+        "temperatures",
+        "boot_time",
+    }
+)
 
-    gpus = collect_gpus_vitals()
-    fans = _gpu_fans(gpus) + collect_fans()
 
-    all_temps = []
-    try:
-        for name, entries in (psutil.sensors_temperatures(fahrenheit=False) or {}).items():
-            for entry in entries:
-                all_temps.append(
-                    safe_dict(
-                        sensor=name,
-                        label=entry.label or name,
-                        celsius=round(entry.current, 1) if entry.current is not None else None,
-                    )
-                )
-    except Exception:
-        pass
+def get_vitals(needs: frozenset[str] | None = None) -> dict:
+    """Live metrics for the dashboard (poll ~1s). Pass *needs* to collect only what a query uses."""
+    want = VITALS_ALL if needs is None else frozenset(needs)
 
-    rates = _throughput()
-    dr, dw = _disk_counters()
-    nr, ns = _net_counters()
+    gpus: list[dict] = []
+    if "gpus" in want or "fans" in want:
+        gpus = collect_gpus_vitals()
 
-    return {
-        "collected_at": datetime.now(timezone.utc).isoformat(),
-        "cpu": collect_cpu_vitals(),
-        "memory": collect_memory_vitals(),
-        "gpus": gpus,
-        "storage": collect_storage_vitals(),
-        "network": collect_network_vitals(),
-        "rates": {
+    out: dict = {"collected_at": datetime.now(timezone.utc).isoformat()}
+
+    if "cpu" in want:
+        out["cpu"] = collect_cpu_vitals()
+    if "memory" in want:
+        out["memory"] = collect_memory_vitals()
+    if "gpus" in want:
+        out["gpus"] = gpus
+    if "storage" in want:
+        out["storage"] = collect_storage_vitals()
+    if "network" in want:
+        out["network"] = collect_network_vitals()
+
+    if "rates" in want:
+        sample = _sample_io()
+        rates = _update_rates_from_sample(sample)
+        out["rates"] = {
             "disk_read_mbs": rates.get("disk_read_mbs", 0.0),
             "disk_write_mbs": rates.get("disk_write_mbs", 0.0),
             "net_recv_mbs": rates.get("net_recv_mbs", 0.0),
             "net_sent_mbs": rates.get("net_sent_mbs", 0.0),
             "ready": bool(rates.get("ready")),
-        },
-        "counters": {
-            "disk_read_bytes": dr,
-            "disk_write_bytes": dw,
-            "net_recv_bytes": nr,
-            "net_sent_bytes": ns,
-            "t_mono": time.monotonic(),
-        },
-        "battery": battery,
-        "fans": fans,
-        "fans_available": bool(fans),
-        "temperatures": all_temps or None,
-        "boot_time": psutil.boot_time(),
-    }
+        }
+        out["counters"] = {
+            "disk_read_bytes": sample["disk_read"],
+            "disk_write_bytes": sample["disk_write"],
+            "net_recv_bytes": sample["net_recv"],
+            "net_sent_bytes": sample["net_sent"],
+            "t_mono": sample["t"],
+        }
+
+    if "battery" in want:
+        battery = None
+        if hasattr(psutil, "sensors_battery"):
+            bat = psutil.sensors_battery()
+            if bat is not None:
+                battery = safe_dict(
+                    percent=bat.percent,
+                    power_plugged=bat.power_plugged,
+                    secs_left=bat.secsleft if bat.secsleft and bat.secsleft >= 0 else None,
+                )
+        out["battery"] = battery
+
+    if "fans" in want:
+        fans = _gpu_fans(gpus) + collect_fans()
+        out["fans"] = fans
+        out["fans_available"] = bool(fans)
+
+    if "temperatures" in want:
+        all_temps = []
+        try:
+            for name, entries in (psutil.sensors_temperatures(fahrenheit=False) or {}).items():
+                for entry in entries:
+                    all_temps.append(
+                        safe_dict(
+                            sensor=name,
+                            label=entry.label or name,
+                            celsius=round(entry.current, 1) if entry.current is not None else None,
+                        )
+                    )
+        except Exception:
+            pass
+        out["temperatures"] = all_temps or None
+
+    if "boot_time" in want:
+        out["boot_time"] = psutil.boot_time()
+
+    return out

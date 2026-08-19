@@ -6,12 +6,14 @@ System Inspector is a local CLI. It reads Linux system interfaces (sysfs, `/proc
 
 ```mermaid
 flowchart LR
-  CLI[sysinspect.py] --> RQ[run_query]
+  CLI[sysinspect.py] --> LM[live_mode policy]
+  CLI --> RQ[run_query]
   RQ --> SNAP[Snapshot]
   SNAP --> COL[collectors]
   RQ --> RES[resource handlers]
   RES --> SNAP
-  CLI --> LQ[live_query timed wrapper]
+  CLI --> LL[live_loop]
+  LL --> LQ[live_query timed wrapper]
   LQ --> RQ
   CLI --> FMT[format.py / tui.py]
   RES --> OUT[payload dict]
@@ -20,13 +22,15 @@ flowchart LR
   RED --> OUT
 ```
 
-1. **`sysinspect.py`** — argparse, live TUI loop, `--json` / `--plain` / `--redact`.
-2. **`run_query()`** in `resources.py` — turns tokens like `gpu temp` into one or more resource payloads. Collector failures return `{"ok": false, ...}` instead of crashing the CLI.
-3. **`Snapshot`** — lazy cache for inventory, vitals, and expensive net slices (connections, listen, public IP, …) for the lifetime of one query.
-4. **Resource handlers** — build JSON-shaped dicts (`status`, `gpu`, `net`, …). They read through `Snapshot`; they do not re-fetch ad hoc.
-5. **`format.py`** — human text; **`tui.py`** — colors, meters, live dashboard, charts.
-6. **`redact.py`** — optional mask for serials / UUIDs before output.
-7. **`live_query.py`** — live mode only: `run_query_timed()` with a 2.5s wall clock cap; on timeout the UI keeps the last good payload and shows “refresh slow”.
+1. **`sysinspect.py`** — argparse, dispatch, `--json` / `--plain` / `--once` / `--redact`.
+2. **`live_mode.py`** — which queries refresh on a TTY (`si gpu`) vs print once (`si os`).
+3. **`run_query()`** in `resources.py` — turns tokens like `gpu temp` into one or more resource payloads. Collector failures return `{"ok": false, ...}` instead of crashing the CLI.
+4. **`Snapshot`** — lazy cache for inventory, vitals, and expensive net slices (connections, listen, public IP, …) for the lifetime of one query. Live ticks may reuse inventory via `InventoryCache`.
+5. **Resource handlers** — build JSON-shaped dicts (`status`, `gpu`, `net`, …). They read through `Snapshot`; they do not re-fetch ad hoc.
+6. **`format.py`** — human text; **`tui.py`** — colors, meters, live dashboard, charts.
+7. **`redact.py`** — optional mask for serials / UUIDs before output.
+8. **`live_query.py`** — live mode only: `run_query_timed()` with a 2.5s wall clock cap; on timeout the UI keeps the last good payload and shows “refresh slow”.
+9. **`live_loop.py`** — interactive / piped refresh. Fetch is never inside paint; keystrokes only rewrite the prompt.
 
 ## Directory roles
 
@@ -39,7 +43,9 @@ flowchart LR
 | `backend/fields.py` | OS / net field token sets shared by query + format |
 | `backend/format.py` | Terminal formatting |
 | `backend/tui.py` | Live UI, banners, plotext graphs |
-| `backend/live_query.py` | Live-mode query timeout wrapper |
+| `backend/live_mode.py` | Live vs snapshot policy |
+| `backend/live_loop.py` | Interactive / piped refresh loop |
+| `backend/live_query.py` | Live-mode query timeout + inventory reuse |
 | `backend/redact.py` | Sensitive field masking |
 | `backend/help_text.py` | Text for `si help` |
 | `tests/` | pytest |
@@ -82,7 +88,11 @@ Tests cover single-GPU, dual identical NVIDIA (two PCI slots), and iGPU + dGPU l
 
 ## Live mode
 
-Interactive live runs `run_query_timed()` inside `paint()`. If collection exceeds **2.5s** (e.g. `si live net public`), the UI returns immediately, keeps the previous payload, and shows **refresh slow**. The slow worker is left running; the next refresh reaps it instead of stacking another query. One-shot commands (`si net public`) are not capped.
+On a TTY, sensor commands (`cpu`, `gpu`, `ram`, `temps`, `status`, `disk`, `net` throughput, `fans`, `battery`) enter the live board. Facts (`os`, `board`, `scan`, `version`, `uptime`, `all`) and expensive net slices (`public`, `connections`, `listen`, …) print once. `--once`, `--json`, and `--plain` force a snapshot. `si live …` still forces the refresh loop.
+
+`live_loop` fetches on a worker (`run_query_timed`), then paints. Keystrokes only rewrite the prompt. Collection is not done inside paint. Inventory is reused for **30s** across ticks so lspci/DMI is not repeated every second.
+
+If collection exceeds **2.5s**, the UI returns immediately, keeps the previous payload, and shows **refresh slow**. The slow worker is left running; the next refresh reaps it instead of stacking another query. One-shot commands (`si net public`) are not capped.
 
 ## Security and privacy
 
@@ -98,7 +108,7 @@ Interactive live runs `run_query_timed()` inside `paint()`. If collection exceed
 2. Add a `resource_*()` handler in `resources.py` and register it in `HANDLERS`.
 3. Add aliases to `ALIASES` (and field aliases if sliceable).
 4. Add a branch in `format.py` `format_human()` for display.
-5. If it appears in live mode, extend `extract_metrics()` in `tui.py`.
+5. If it appears in live mode, extend `extract_metrics()` in `tui.py` and `LIVE_RESOURCES` in `live_mode.py` if it should auto-refresh.
 6. Add tests in `tests/` for parsing and formatting.
 
 ## Dev commands

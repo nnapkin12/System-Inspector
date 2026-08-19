@@ -119,6 +119,17 @@ def format_version_card(data: dict, *, color: bool = True) -> str:
     return "\n".join(side_by_side(logo, info, gap=4))
 
 
+def logo_header(*, watching: str = "", color: bool = True) -> str:
+    """Fastfetch-style SI logo left, title + query label right."""
+    logo = si_logo_colored(color=color)
+    right = [c("SYSTEM INSPECTOR", _BOLD, _WHITE, color=color)]
+    if watching:
+        right.append(c(watching, _DIM, color=color))
+    else:
+        right.append(c("local · offline · no server", _DIM, color=color))
+    return "\n".join(side_by_side(logo, right, gap=4))
+
+
 def banner(color: bool = True) -> str:
     """SI logo left, taglines right — only for bare `si` and `si help`."""
     logo = si_logo_colored(color=color)
@@ -204,12 +215,16 @@ def _sev_style(v: float, *, hot: bool = False) -> tuple[str, ...]:
 
 
 def default_bar_width(*, columns: int = 1) -> int:
-    """Use nearly the full terminal width — sparse bars feel 'small'."""
+    """Nearly full terminal width. Live board puts the number on its own line."""
     cols = max(1, columns)
-    # "    load  " (~10) + value (~8) + gutters between columns
-    chrome = 18 + (8 if cols > 1 else 0)
-    usable = max(40, term_width() - 2) // cols
-    return max(28 if cols > 1 else 36, usable - chrome)
+    gutter = 8 if cols > 1 else 4
+    usable = max(40, term_width() - gutter) // cols
+    return max(32 if cols > 1 else 40, usable - 4)
+
+
+def bar_thickness() -> int:
+    """Two-row bars when the terminal is tall enough; one row on short windows."""
+    return 2 if term_height() >= 28 else 1
 
 
 def meter(
@@ -245,6 +260,66 @@ def meter(
     return bar_s + val_s
 
 
+def meter_block(
+    value: float | None,
+    width: int | None = None,
+    color: bool = True,
+    *,
+    unit: str = "%",
+    label: str | None = None,
+    rows: int | None = None,
+) -> list[str]:
+    """Big readout + 1–2 row bar for the live board."""
+    if width is None:
+        width = default_bar_width()
+    if rows is None:
+        rows = bar_thickness()
+    rows = max(1, min(3, rows))
+    if value is None:
+        empty = "─" * width
+        tail = label if label else "n/a"
+        bar = c(f"    [{empty}]", _DIM, color=color)
+        return [c(f"    {tail}", _DIM, color=color)] + [bar] * rows
+    try:
+        v = max(0.0, min(100.0, float(value)))
+    except (TypeError, ValueError):
+        return meter_block(None, width=width, color=color, unit=unit, label=label, rows=rows)
+    filled = int(round((v / 100.0) * width))
+    filled = max(0, min(width, filled))
+    bar = "█" * filled + "░" * (width - filled)
+    if label is not None:
+        value_txt = label
+    elif unit == "%":
+        value_txt = f"{int(round(v))}%"
+    else:
+        value_txt = f"{int(round(v))}{unit}"
+    style = _sev_style(v, hot=(unit == "°C"))
+    out = [c(f"    {value_txt}", _BOLD, *style, color=color)]
+    bar_line = "    " + c(f"[{bar}]", *style, color=color)
+    out.extend([bar_line] * rows)
+    return out
+
+
+def temp_meter_block(
+    celsius: float | None,
+    width: int | None = None,
+    color: bool = True,
+    lo: float = 25,
+    hi: float = 100,
+    rows: int | None = None,
+) -> list[str]:
+    if celsius is None:
+        return meter_block(None, width=width, color=color, unit="°C", rows=rows)
+    try:
+        t = float(celsius)
+    except (TypeError, ValueError):
+        return meter_block(None, width=width, color=color, unit="°C", rows=rows)
+    pct = (t - lo) / (hi - lo) * 100.0
+    return meter_block(
+        pct, width=width, color=color, unit="°C", label=f"{int(round(t))}°C", rows=rows
+    )
+
+
 def temp_meter(
     celsius: float | None,
     width: int | None = None,
@@ -269,7 +344,7 @@ def decorate_human(text: str, color: bool = True) -> str:
     """
     Post-process plain human output: add big meters next to Load / % / temps.
     """
-    w = max(24, min(48, term_width() - 22))
+    w = max(36, term_width() - 22)
     out_lines: list[str] = []
     for line in text.splitlines():
         # CPU Load   10%
@@ -683,7 +758,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
 
 
 def _sensor_block(row: dict[str, Any], w_bar: int, color: bool) -> list[str]:
-    """One sensor's lines for the live board (no trailing blank)."""
+    """One sensor for the live board: title, big number, thick bar."""
     lines: list[str] = []
     title = row["label"]
     if row.get("extra") and row.get("pct") is None and row.get("temp_c") is None:
@@ -694,44 +769,36 @@ def _sensor_block(row: dict[str, Any], w_bar: int, color: bool) -> list[str]:
     has_temp = row.get("temp_c") is not None
     has_rate = row.get("rate") is not None
     note = row.get("note")
+    rows = bar_thickness()
 
     if has_pct:
-        lines.append(
-            "    "
-            + c("load  ", _DIM, color=color)
-            + meter(row.get("pct"), width=w_bar, color=color)
-        )
+        lines.append(c("    load", _DIM, color=color))
+        lines.extend(meter_block(row.get("pct"), width=w_bar, color=color, rows=rows))
     if has_temp:
-        lines.append(
-            "    "
-            + c("temp  ", _DIM, color=color)
-            + temp_meter(row.get("temp_c"), width=w_bar, color=color)
-        )
+        lines.append(c("    temp", _DIM, color=color))
+        lines.extend(temp_meter_block(row.get("temp_c"), width=w_bar, color=color, rows=rows))
     if has_rate and not has_pct:
         rate = float(row.get("rate") or 0.0)
         pct_vis = min(100.0, (rate / 500.0) * 100.0)
-        lines.append(
-            "    "
-            + c("rate  ", _DIM, color=color)
-            + meter(
+        lines.append(c("    rate", _DIM, color=color))
+        lines.extend(
+            meter_block(
                 pct_vis,
                 width=w_bar,
                 color=color,
                 unit="",
                 label=f"{rate:.1f} MB/s",
+                rows=rows,
             )
         )
     if row.get("extra") and has_pct:
-        lines.append(c(f"          {row['extra']}", _DIM, color=color))
+        lines.append(c(f"    {row['extra']}", _DIM, color=color))
     if not has_pct and not has_temp and not has_rate:
-        # Prefer a clear sentence over a hollow bar of dashes
         if note:
             lines.append(c(f"    {note}", _DIM, color=color))
         else:
-            lines.append(
-                "    "
-                + c("      ", _DIM, color=color)
-                + meter(None, width=w_bar, color=color, unit="", label="n/a")
+            lines.extend(
+                meter_block(None, width=w_bar, color=color, unit="", label="n/a", rows=rows)
             )
     elif note and (not has_pct or not has_temp):
         lines.append(c(f"    {note}", _DIM, color=color))
@@ -756,7 +823,8 @@ def format_watch_dashboard(payload: dict, color: bool = True) -> str:
         return decorate_human(format_human(payload, color=color), color=color)
 
     tw = term_width()
-    columns = 2 if tw >= 100 and len(rows) >= 2 else 1
+    # Two columns only on very wide terminals — splitting early makes bars tiny.
+    columns = 2 if tw >= 160 and len(rows) >= 4 else 1
     w_bar = default_bar_width(columns=columns)
     blocks = [_sensor_block(row, w_bar, color) for row in rows]
 
@@ -845,8 +913,36 @@ def leave_alt_screen() -> None:
     sys.stdout.flush()
 
 
-def clear_home() -> None:
-    sys.stdout.write("\033[H\033[2J")
+def paint_frame(text: str) -> None:
+    """Home, write the frame, erase leftover lines. No full-screen wipe."""
+    sys.stdout.write("\033[H")
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+
+
+def paint_from_row(row: int, text: str) -> None:
+    """Rewrite from a 1-based row to the end of the screen (prompt-only updates)."""
+    sys.stdout.write(f"\033[{max(1, row)};1H")
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+
+
+def paint_region(row: int, text: str, *, clear_through: int | None = None) -> None:
+    """Paint *text* at *row* without touching lines below *clear_through*."""
+    sys.stdout.write(f"\033[{max(1, row)};1H")
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
+    end_row = row + text.count("\n")
+    if clear_through is not None and clear_through >= end_row:
+        for r in range(end_row + 1, clear_through + 1):
+            sys.stdout.write(f"\033[{r};1H\033[K")
     sys.stdout.flush()
 
 
