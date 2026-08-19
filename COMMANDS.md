@@ -1,11 +1,7 @@
 you:~$ si
-  ░██████                  ░██████            SYSTEM INSPECTOR  ·  local live vitals and hardware
- ░██   ░██                   ░██              · offline · Ctrl+C stops live
-░██                          ░██
- ░████████                   ░██
-        ░██                  ░██
- ░██   ░██                   ░██
-  ░██████  SYSTEM          ░██████ INSPECT
+   SYSTEM INSPECTOR  ·  local live vitals and hardware
+             offline · Ctrl+C stops live
+
 
 ────────────────────────────────────────────────────────────────────────
 
