@@ -14,6 +14,13 @@ def test_vitals_needs_status_union():
     assert needs == frozenset({"cpu", "gpus"})
 
 
+def test_vitals_needs_status_is_cheap():
+    needs = vitals_needs_for(["status"])
+    assert needs == frozenset({"cpu", "memory", "gpus", "rates", "battery"})
+    assert "fans" not in needs
+    assert "temperatures" not in needs
+
+
 def test_get_vitals_partial_skips_fans():
     with patch("backend.collectors.vitals.collect_gpus_vitals", return_value=[{"name": "GPU"}]):
         with patch("backend.collectors.vitals.collect_fans") as fans:

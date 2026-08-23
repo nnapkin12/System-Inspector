@@ -45,12 +45,12 @@ def collect_os() -> dict:
         architecture=platform.machine(),
         python=platform.python_version(),
         boot_id=read_text("/proc/sys/kernel/random/boot_id"),
-        uptime_seconds=_uptime_seconds(),
+        uptime_seconds=uptime_seconds(),
         raw_os_release=os_release or None,
     )
 
 
-def _uptime_seconds() -> float | None:
+def uptime_seconds() -> float | None:
     raw = read_text("/proc/uptime")
     if not raw:
         return None

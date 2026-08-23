@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
+
+_hwmon_lock = threading.Lock()
+_hwmon_temps: dict | None = None
+_hwmon_at: float = 0.0
+# One hwmon pass per live tick — cpu + gpu fallback used to scan twice.
+HWMON_TEMPS_TTL = 0.25
 
 
 def run_cmd(args: list[str], timeout: float = 3.0) -> str | None:
@@ -43,3 +51,27 @@ def bytes_to_gb(n: int | float | None, digits: int = 2) -> float | None:
 def safe_dict(**kwargs: Any) -> dict[str, Any]:
     """Drop keys whose values are None for cleaner JSON."""
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def sensors_temperatures() -> dict:
+    """Cached psutil hwmon read so one tick does not walk sysfs twice."""
+    global _hwmon_temps, _hwmon_at
+    now = time.monotonic()
+    with _hwmon_lock:
+        if _hwmon_temps is not None and (now - _hwmon_at) < HWMON_TEMPS_TTL:
+            return _hwmon_temps
+        try:
+            import psutil
+
+            _hwmon_temps = psutil.sensors_temperatures(fahrenheit=False) or {}
+        except Exception:
+            _hwmon_temps = {}
+        _hwmon_at = now
+        return _hwmon_temps
+
+
+def reset_sensors_cache_for_tests() -> None:
+    global _hwmon_temps, _hwmon_at
+    with _hwmon_lock:
+        _hwmon_temps = None
+        _hwmon_at = 0.0

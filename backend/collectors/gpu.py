@@ -4,7 +4,7 @@ import re
 import threading
 from pathlib import Path
 
-from .util import read_text, run_cmd, safe_dict
+from .util import read_text, run_cmd, safe_dict, sensors_temperatures
 
 _nvml_lock = threading.Lock()
 _nvml_live = False
@@ -41,6 +41,31 @@ def nvml_live_end() -> None:
 
 def reset_nvml_live_for_tests() -> None:
     nvml_live_end()
+
+
+def _nvml_acquire():
+    """Open NVML only if live mode is not already holding it."""
+    try:
+        import pynvml
+    except ImportError:
+        return None, False
+    with _nvml_lock:
+        if _nvml_live:
+            return pynvml, False
+        try:
+            pynvml.nvmlInit()
+            return pynvml, True
+        except Exception:
+            return None, False
+
+
+def _nvml_release(pynvml, owns_session: bool) -> None:
+    if not owns_session or pynvml is None:
+        return
+    try:
+        pynvml.nvmlShutdown()
+    except Exception:
+        pass
 
 
 def normalize_pci_bdf(s: str | None) -> str | None:
@@ -161,14 +186,8 @@ def collect_gpus_vitals() -> list[dict]:
 
 
 def _from_nvidia_nvml() -> list[dict]:
-    try:
-        import pynvml
-    except ImportError:
-        return []
-
-    try:
-        pynvml.nvmlInit()
-    except Exception:
+    pynvml, owns_session = _nvml_acquire()
+    if pynvml is None:
         return []
 
     out: list[dict] = []
@@ -230,29 +249,14 @@ def _from_nvidia_nvml() -> list[dict]:
                 )
             )
     finally:
-        try:
-            pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        _nvml_release(pynvml, owns_session)
     return out
 
 
 def _nvidia_vitals() -> list[dict]:
-    try:
-        import pynvml
-    except ImportError:
-        # Fall back to nvidia-smi once
+    pynvml, owns_session = _nvml_acquire()
+    if pynvml is None:
         return _nvidia_smi_vitals()
-
-    owns_session = False
-    with _nvml_lock:
-        live = _nvml_live
-    if not live:
-        try:
-            pynvml.nvmlInit()
-            owns_session = True
-        except Exception:
-            return _nvidia_smi_vitals()
 
     out: list[dict] = []
     try:
@@ -326,11 +330,7 @@ def _nvidia_vitals() -> list[dict]:
                 )
             )
     finally:
-        if owns_session:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
+        _nvml_release(pynvml, owns_session)
     return out
 
 
@@ -465,11 +465,7 @@ def _from_drm() -> list[dict]:
 
 
 def _fallback_vitals_from_hwmon() -> list[dict]:
-    try:
-        import psutil
-    except ImportError:
-        return []
-    readings = psutil.sensors_temperatures(fahrenheit=False) or {}
+    readings = sensors_temperatures()
     out: list[dict] = []
     for chip, entries in readings.items():
         low = chip.lower()

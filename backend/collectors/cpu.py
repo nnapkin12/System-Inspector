@@ -6,7 +6,7 @@ from pathlib import Path
 
 import psutil
 
-from .util import read_text, run_cmd, safe_dict
+from .util import read_text, run_cmd, safe_dict, sensors_temperatures
 
 
 def collect_cpu_inventory() -> dict:
@@ -146,7 +146,7 @@ def _lscpu_summary() -> dict | None:
 
 def _cpu_temperatures() -> list[dict]:
     temps: list[dict] = []
-    readings = psutil.sensors_temperatures(fahrenheit=False) or {}
+    readings = sensors_temperatures()
     preferred = ("k10temp", "coretemp", "zenpower", "acpitz", "cpu_thermal")
     for name in preferred:
         if name not in readings:

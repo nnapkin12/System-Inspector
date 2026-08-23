@@ -1,4 +1,11 @@
-from backend.collectors.gpu import merge_gpu_inventory, normalize_pci_bdf
+from backend.collectors.gpu import (
+    _nvml_acquire,
+    _nvml_lock,
+    merge_gpu_inventory,
+    normalize_pci_bdf,
+    reset_nvml_live_for_tests,
+)
+from backend.collectors import gpu as gpu_mod
 from backend.resources import merge_gpu_devices
 
 
@@ -210,3 +217,16 @@ def test_merge_gpu_inventory_pairs_nvml_and_lspci_by_bdf_not_order():
     assert by_index[0]["pci_name"] == "slot-a"
     assert by_index[1]["pci_slot"] == "02:00.0"
     assert by_index[1]["pci_name"] == "slot-b"
+
+
+def test_nvml_acquire_does_not_own_session_when_live():
+    reset_nvml_live_for_tests()
+    with _nvml_lock:
+        gpu_mod._nvml_live = True
+    try:
+        _mod, owns = _nvml_acquire()
+        assert owns is False
+    finally:
+        with _nvml_lock:
+            gpu_mod._nvml_live = False
+        reset_nvml_live_for_tests()

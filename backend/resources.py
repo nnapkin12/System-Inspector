@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from backend.collectors import get_inventory
 from backend.collectors.gpu import normalize_pci_bdf, short_gpu_name as _short_gpu
+from backend.collectors.os_info import uptime_seconds
 from backend.fields import NET_DETAIL_FIELDS, OS_DETAIL_FIELDS
 from backend.query import ALIASES, CANONICAL, parse_query, vitals_needs_for
 from backend.snapshot import Snapshot
@@ -49,7 +50,11 @@ def resource_status(snap: Snapshot) -> dict:
     vit = snap.vitals()
     s = inv.get("summary") or {}
     cpu = vit.get("cpu") or {}
-    ram = (vit.get("memory") or {}).get("ram") or {}
+    mem = vit.get("memory") or {}
+    ram = mem.get("ram") or {}
+    swap = mem.get("swap") or {}
+    rates = vit.get("rates") or {}
+    bat = vit.get("battery")
     gpus = vit.get("gpus") or []
     # Prefer discrete NVIDIA for the summary "GPU" slots when multi-GPU
     g0 = next(
@@ -58,9 +63,6 @@ def resource_status(snap: Snapshot) -> dict:
     )
     if g0 is None:
         g0 = gpus[0] if gpus else {}
-    # secondary for a second temperature if available
-    others = [g for g in gpus if g is not g0]
-    g1 = others[0] if others else {}
     # Inventory-only NVIDIA (no NVML) still shows up in summary gpus names
     gpu_note = None
     inv_gpu_names = " ".join(str(x) for x in (s.get("gpus") or [])).lower()
@@ -80,6 +82,9 @@ def resource_status(snap: Snapshot) -> dict:
         )
     elif s.get("gpus"):
         gpu_note = "GPU listed · no live sensors yet"
+    up_secs = uptime_seconds()
+    if up_secs is None:
+        up_secs = s.get("uptime_seconds")
     return _ok(
         "status",
         {
@@ -88,13 +93,32 @@ def resource_status(snap: Snapshot) -> dict:
             "cpu": s.get("cpu"),
             "gpus": s.get("gpus"),
             "ram_gb": s.get("ram_gb"),
-            "uptime_seconds": s.get("uptime_seconds"),
+            "uptime_seconds": up_secs,
             "live": {
                 "cpu_percent": cpu.get("usage_percent"),
                 "cpu_temp_c": _cpu_temp(cpu),
+                "cpu_freq_mhz": cpu.get("freq_current_mhz"),
+                "load_1m": cpu.get("load_1m"),
                 "gpu_percent": g0.get("usage_percent"),
-                "gpu_temp_c": g0.get("temperature_c") if g0.get("temperature_c") is not None else g1.get("temperature_c"),
+                "gpu_temp_c": g0.get("temperature_c"),
+                "gpu_power_w": g0.get("power_watts"),
+                "gpu_power_limit_w": g0.get("power_limit_watts"),
+                "gpu_vram_used_mb": g0.get("vram_used_mb"),
+                "gpu_vram_total_mb": g0.get("vram_total_mb"),
+                "gpu_clock_mhz": g0.get("graphics_mhz"),
                 "ram_percent": ram.get("percent"),
+                "ram_used_gb": ram.get("used_gb"),
+                "ram_total_gb": ram.get("total_gb"),
+                "swap_percent": swap.get("percent"),
+                "swap_used_gb": swap.get("used_gb"),
+                "swap_total_gb": swap.get("total_gb"),
+                "disk_read_mbs": rates.get("disk_read_mbs"),
+                "disk_write_mbs": rates.get("disk_write_mbs"),
+                "net_recv_mbs": rates.get("net_recv_mbs"),
+                "net_sent_mbs": rates.get("net_sent_mbs"),
+                "rates_ready": bool(rates.get("ready")),
+                "battery_percent": (bat or {}).get("percent") if bat else None,
+                "battery_plugged": (bat or {}).get("power_plugged") if bat else None,
                 "gpu_note": gpu_note,
             },
         },

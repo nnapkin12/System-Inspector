@@ -97,13 +97,30 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             live_bits.append(f"GPU {pct(live.get('gpu_percent'))}")
         live_bits.append(f"RAM {pct(live.get('ram_percent'))}")
         lines = [
-            f"{d.get('hostname') or 'host'}  ·  {d.get('os') or '—'}",
             f"CPU  {d.get('cpu') or '—'}",
             f"GPU  {gpus_s}",
             f"RAM  {d.get('ram_gb')} GB",
             "Live  " + "  ·  ".join(live_bits),
             f"Temps  CPU {deg(live.get('cpu_temp_c'))}  ·  GPU {deg(live.get('gpu_temp_c'))}",
+            f"Uptime  {fmt_uptime(d.get('uptime_seconds'))}",
         ]
+        vram_u, vram_t = live.get("gpu_vram_used_mb"), live.get("gpu_vram_total_mb")
+        gpu_more = []
+        if vram_u is not None and vram_t is not None:
+            gpu_more.append(f"VRAM {round(float(vram_u) / 1024, 1)}/{round(float(vram_t) / 1024, 1)} GB")
+        if live.get("gpu_power_w") is not None:
+            gpu_more.append(f"{live.get('gpu_power_w')} W")
+        if live.get("gpu_clock_mhz") is not None:
+            gpu_more.append(f"{int(round(float(live['gpu_clock_mhz'])))} MHz")
+        if gpu_more:
+            lines.append("GPU   " + "  ·  ".join(gpu_more))
+        if live.get("rates_ready") and live.get("net_recv_mbs") is not None:
+            lines.append(
+                f"Net   ↓{live.get('net_recv_mbs')} ↑{live.get('net_sent_mbs')} MB/s"
+            )
+        if live.get("battery_percent") is not None:
+            plug = "AC" if live.get("battery_plugged") else "battery"
+            lines.append(f"Battery  {pct(live.get('battery_percent'))}  ·  {plug}")
         if live.get("gpu_percent") is None and live.get("gpu_note"):
             lines.append(f"GPU   {live.get('gpu_note')}")
         return "\n".join(lines)

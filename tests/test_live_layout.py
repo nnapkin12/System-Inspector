@@ -11,11 +11,11 @@ def test_footer_stable_when_switching_query(monkeypatch):
     state.flash = "watching cpu"
     state.flash_until = 9999999999
     assert _visible_flash(state) == ""
-    assert _footer_line_count(state) == 3
+    assert _footer_line_count(state) == 2
 
     state.flash = "faster · every 0.5s"
     assert _visible_flash(state) != ""
-    assert _footer_line_count(state) == 4
+    assert _footer_line_count(state) == 3
 
 
 def test_layout_pins_footer_and_keeps_prompt(monkeypatch):
@@ -34,9 +34,9 @@ def test_layout_pins_footer_and_keeps_prompt(monkeypatch):
         return "GPU\n" + ("X" * 120 + "\n") * 30
 
     board, chrome, chrome_row = _layout_frame(state, render_once, color=False)
-    assert "›" in chrome
+    assert "›" not in chrome
     assert "watching  gpu" in strip_ansi(chrome)
-    assert chrome_row == 22  # 24 - 3 + 1
+    assert chrome_row == 23  # 24 - 2 + 1
     assert board.count("\n") + 1 < chrome_row
     assert all(len(strip_ansi(ln)) <= 80 for ln in board.splitlines())
 
@@ -56,6 +56,10 @@ def test_short_board_still_pins_chrome_at_bottom(monkeypatch):
     def render_once(payload, *, live=False):
         return "GPU\n50%"
 
+    _board, chrome, chrome_row = _layout_frame(state, render_once, color=False)
+    assert chrome_row == 23
+    assert "watching  gpu" in strip_ansi(chrome)
+    state.draft = "cpu"
     _board, chrome, chrome_row = _layout_frame(state, render_once, color=False)
     assert chrome_row == 22
     assert "›" in chrome

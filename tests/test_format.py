@@ -39,6 +39,7 @@ def test_format_human_status():
             "cpu": "Fake CPU",
             "gpus": ["Fake GPU"],
             "ram_gb": 16,
+            "uptime_seconds": 120,
             "live": {
                 "cpu_percent": 10,
                 "cpu_temp_c": 50,
@@ -50,9 +51,12 @@ def test_format_human_status():
         },
     }
     out = format_human(payload, color=False)
-    assert "testbox" in out
     assert "Fake CPU" in out
     assert "no sensors" in out
+    assert "Temps" in out
+    assert "Uptime" in out
+    assert "testbox" not in out
+    assert "Test OS" not in out
 
 
 def test_format_human_connections_lists_every_socket():

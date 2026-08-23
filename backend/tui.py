@@ -47,11 +47,15 @@ def paint_health(text: str, level: str, *, color: bool) -> str:
 
 # Fallback if logo file missing
 _SI_MARK_FALLBACK = [
-    "  ████████   ██████",
-    "  ██           ██",
-    "  ████████     ██",
-    "        ██     ██",
-    "  ████████   ██████",
+    "   ████████                         ████████",
+    "  ██     ██                            ██",
+    " ██                                    ██",
+    " ██                                    ██",
+    "  █████████                            ██",
+    "         ██                            ██",
+    "         ██                            ██",
+    "  ██     ██                            ██",
+    "   ████████   SYSTEM                ████████ INSPECT",
 ]
 
 
@@ -140,15 +144,44 @@ def format_version_card(data: dict, *, color: bool = True) -> str:
     return "\n".join(side_by_side(logo, info, gap=4))
 
 
-def logo_header(*, watching: str = "", color: bool = True) -> str:
-    """Fastfetch-style SI logo left, title + query label right."""
+def logo_header(*, watching: str = "", facts: list[str] | None = None, color: bool = True) -> str:
+    """SI wordmark left (S and I already in the art). Facts sit lower so the I cap is not clipped."""
     logo = si_logo_colored(color=color)
-    right = [c("SYSTEM INSPECTOR", _BOLD, _WHITE, color=color)]
+    right: list[str] = [""]
+    right.append(c("SYSTEM INSPECTOR", _BOLD, _WHITE, color=color))
     if watching:
         right.append(c(watching, _DIM, color=color))
     else:
         right.append(c("local · offline · no server", _DIM, color=color))
-    return "\n".join(side_by_side(logo, right, gap=4))
+    if facts:
+        right.append("")
+        right.extend(facts)
+    return "\n".join(side_by_side(logo, right, gap=3))
+
+
+def status_identity_lines(data: dict, *, color: bool = True, width: int | None = None) -> list[str]:
+    """Hardware names + uptime beside the logo — no OS / host."""
+    from backend.format import fmt_uptime, short_gpu
+
+    logo_w = max((len(ln) for ln in load_si_logo()), default=0) + 3
+    name_w = max(18, (width or term_width()) - logo_w - 6)
+
+    cpu = data.get("cpu") or "—"
+    if len(str(cpu)) > name_w:
+        cpu = str(cpu)[: max(8, name_w - 1)] + "…"
+    gpus = data.get("gpus") or []
+    gpu = short_gpu(gpus[0]) if gpus else "—"
+    if gpu.lower().startswith("nvidia "):
+        gpu = gpu[7:]
+    if len(gpus) > 1:
+        gpu = f"{gpu}  + iGPU"
+    if len(gpu) > name_w:
+        gpu = gpu[: max(8, name_w - 1)] + "…"
+    return [
+        c("CPU", _DIM, color=color) + f"  {cpu}",
+        c("GPU", _DIM, color=color) + f"  {gpu}",
+        c("up ", _DIM, color=color) + f" {fmt_uptime(data.get('uptime_seconds'))}",
+    ]
 
 
 def banner(color: bool = True) -> str:
@@ -215,24 +248,26 @@ def _sev_style_battery(v: float, *, plugged: bool) -> tuple[str, ...]:
 
 
 def _sev_style(v: float, *, hot: bool = False) -> tuple[str, ...]:
-    """Color for severity: green → white → yellow → red."""
+    """Green = healthy/low, yellow = mid, red = high. No white mid-band."""
     if hot:
-        # temperatures (°C) mapped roughly
-        if v >= 85:
+        if v >= 83:
             return (_BOLD, _RED)
-        if v >= 70:
+        if v >= 65:
             return (_BOLD, _YEL)
-        if v >= 50:
-            return (_WHITE,)
         return (_GRN,)
-    # percentages
-    if v >= 90:
+    if v >= 80:
         return (_BOLD, _RED)
-    if v >= 70:
+    if v >= 55:
         return (_BOLD, _YEL)
-    if v >= 35:
-        return (_WHITE,)
     return (_GRN,)
+
+
+def _painted_bar(filled: int, width: int, style: tuple[str, ...], *, color: bool) -> str:
+    """Colored fill, dim empty — the whole bar no longer flashes white."""
+    filled = max(0, min(width, filled))
+    fill = c("█" * filled, *style, color=color)
+    empty = c("░" * (width - filled), _DIM, color=color)
+    return c("[", _DIM, color=color) + fill + empty + c("]", _DIM, color=color)
 
 
 def default_bar_width(*, columns: int = 1) -> int:
@@ -258,6 +293,7 @@ def meter(
     *,
     unit: str = "%",
     label: str | None = None,
+    severity: float | None = None,
 ) -> str:
     """Unicode block bar for 0–100 with a bold, high-contrast value."""
     if width is None:
@@ -269,18 +305,23 @@ def meter(
     try:
         v = max(0.0, min(100.0, float(value)))
     except (TypeError, ValueError):
-        return meter(None, width=width, color=color, unit=unit, label=label)
+        return meter(None, width=width, color=color, unit=unit, label=label, severity=severity)
     filled = int(round((v / 100.0) * width))
     filled = max(0, min(width, filled))
-    bar = "█" * filled + "░" * (width - filled)
     if label is not None:
         value_txt = label
     elif unit == "%":
         value_txt = f"{int(round(v)):>3}%"
     else:
         value_txt = f"{int(round(v))}{unit}"
-    bar_s = c(f"[{bar}]", *_sev_style(v, hot=(unit == "°C")), color=color)
-    val_s = c(f" {value_txt}", _BOLD, *_sev_style(v, hot=(unit == "°C")), color=color)
+    hot = unit == "°C"
+    try:
+        sev = float(severity) if severity is not None else v
+    except (TypeError, ValueError):
+        sev = v
+    style = _sev_style(sev, hot=hot)
+    bar_s = _painted_bar(filled, width, style, color=color)
+    val_s = c(f" {value_txt}", _BOLD, *style, color=color)
     return bar_s + val_s
 
 
@@ -292,6 +333,7 @@ def meter_block(
     unit: str = "%",
     label: str | None = None,
     rows: int | None = None,
+    severity: float | None = None,
 ) -> list[str]:
     """Big readout + 1–2 row bar for the live board."""
     if width is None:
@@ -307,19 +349,25 @@ def meter_block(
     try:
         v = max(0.0, min(100.0, float(value)))
     except (TypeError, ValueError):
-        return meter_block(None, width=width, color=color, unit=unit, label=label, rows=rows)
+        return meter_block(
+            None, width=width, color=color, unit=unit, label=label, rows=rows, severity=severity
+        )
     filled = int(round((v / 100.0) * width))
     filled = max(0, min(width, filled))
-    bar = "█" * filled + "░" * (width - filled)
     if label is not None:
         value_txt = label
     elif unit == "%":
         value_txt = f"{int(round(v))}%"
     else:
         value_txt = f"{int(round(v))}{unit}"
-    style = _sev_style(v, hot=(unit == "°C"))
+    hot = unit == "°C"
+    try:
+        sev = float(severity) if severity is not None else v
+    except (TypeError, ValueError):
+        sev = v
+    style = _sev_style(sev, hot=hot)
     out = [c(f"    {value_txt}", _BOLD, *style, color=color)]
-    bar_line = "    " + c(f"[{bar}]", *style, color=color)
+    bar_line = "    " + _painted_bar(filled, width, style, color=color)
     out.extend([bar_line] * rows)
     return out
 
@@ -340,7 +388,13 @@ def temp_meter_block(
         return meter_block(None, width=width, color=color, unit="°C", rows=rows)
     pct = (t - lo) / (hi - lo) * 100.0
     return meter_block(
-        pct, width=width, color=color, unit="°C", label=f"{int(round(t))}°C", rows=rows
+        pct,
+        width=width,
+        color=color,
+        unit="°C",
+        label=f"{int(round(t))}°C",
+        rows=rows,
+        severity=t,
     )
 
 
@@ -361,7 +415,9 @@ def temp_meter(
     except (TypeError, ValueError):
         return meter(None, width=width, color=color, unit="°C")
     pct = (t - lo) / (hi - lo) * 100.0
-    return meter(pct, width=width, color=color, unit="°C", label=f"{int(round(t)):>3}°C")
+    return meter(
+        pct, width=width, color=color, unit="°C", label=f"{int(round(t)):>3}°C", severity=t
+    )
 
 
 def decorate_human(text: str, color: bool = True) -> str:
@@ -468,10 +524,9 @@ def decorate_human(text: str, color: bool = True) -> str:
             style = _sev_style(pct) if pct < 90 else (_BOLD, _YEL)
             bar_w = max(14, w - 4)
             filled = int(round((pct / 100.0) * bar_w))
-            bar = "█" * filled + "░" * (bar_w - filled)
             out_lines.append(
                 f"{m.group(1)}"
-                + c(f"[{bar}]", *style, color=color)
+                + _painted_bar(filled, bar_w, style, color=color)
                 + c(f" {int(round(pct)):>3}%", _BOLD, *style, color=color)
             )
             continue
@@ -493,11 +548,10 @@ def decorate_human(text: str, color: bool = True) -> str:
             plugged = "AC" in m.group(3)
             bar_w = w
             filled = int(round((pct / 100.0) * bar_w))
-            bar = "█" * filled + "░" * (bar_w - filled)
             style = _sev_style_battery(pct, plugged=plugged)
             out_lines.append(
                 f"{m.group(1)}"
-                + c(f"[{bar}]", *style, color=color)
+                + _painted_bar(filled, bar_w, style, color=color)
                 + c(f" {int(round(pct)):>3}%", _BOLD, *style, color=color)
                 + m.group(3)
             )
@@ -668,13 +722,27 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
 
     if r == "status":
         live = d.get("live") or {}
+        cpu_bits = []
+        if live.get("cpu_freq_mhz") is not None:
+            cpu_bits.append(f"{int(round(float(live['cpu_freq_mhz'])))} MHz")
+        if live.get("load_1m") is not None:
+            cpu_bits.append(f"load {live['load_1m']}")
+        gpu_bits = []
+        vu, vt = live.get("gpu_vram_used_mb"), live.get("gpu_vram_total_mb")
+        if vu is not None and vt is not None:
+            gpu_bits.append(f"{round(float(vu) / 1024, 1)}/{round(float(vt) / 1024, 1)} GB")
+        if live.get("gpu_power_w") is not None:
+            gpu_bits.append(f"{live['gpu_power_w']} W")
+        ram_bits = []
+        if live.get("ram_used_gb") is not None and live.get("ram_total_gb") is not None:
+            ram_bits.append(f"{live['ram_used_gb']}/{live['ram_total_gb']} GB")
         rows.append(
             {
                 "key": "cpu",
                 "label": "CPU",
                 "pct": _f(live.get("cpu_percent")),
                 "temp_c": _f(live.get("cpu_temp_c")),
-                "extra": None,
+                "extra": "  ·  ".join(cpu_bits) or None,
             }
         )
         rows.append(
@@ -683,7 +751,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "label": "GPU",
                 "pct": _f(live.get("gpu_percent")),
                 "temp_c": _f(live.get("gpu_temp_c")),
-                "extra": None,
+                "extra": "  ·  ".join(gpu_bits) or None,
                 "note": live.get("gpu_note"),
             }
         )
@@ -693,7 +761,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "label": "RAM",
                 "pct": _f(live.get("ram_percent")),
                 "temp_c": None,
-                "extra": None,
+                "extra": "  ·  ".join(ram_bits) or None,
             }
         )
         return rows
@@ -857,10 +925,125 @@ def _pad_block(block: list[str], height: int) -> list[str]:
     return out
 
 
+def _fmt_rate(v: Any, *, ready: bool = True) -> str:
+    if not ready or v is None:
+        return "—"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if n < 0.05:
+        return "0.0"
+    return f"{n:.1f}"
+
+
+def _status_bar_rows() -> int:
+    return 1
+
+
+def format_status_board(payload: dict, color: bool = True) -> str:
+    """Hardware vitals — full-width single-row bars, spaced sections."""
+    live = (payload.get("data") or {}).get("live") or {}
+    tw = term_width()
+    w_bar = max(12, default_bar_width() - 8)
+    rows = _status_bar_rows()
+    gap = [""]
+    sections: list[list[str]] = []
+
+    def title(name: str, extra: str = "") -> list[str]:
+        head = c(f"  {name}", _BOLD, _WHITE, color=color)
+        if extra:
+            head += c(f"  ·  {extra}", _DIM, color=color)
+        return [head]
+
+    cpu_bits = []
+    if live.get("cpu_freq_mhz") is not None:
+        cpu_bits.append(f"{float(live['cpu_freq_mhz']) / 1000:.1f} GHz")
+    if live.get("load_1m") is not None:
+        cpu_bits.append(f"load {live['load_1m']}")
+    cpu = title("CPU", "  ·  ".join(cpu_bits))
+    cpu.append(c("    load", _DIM, color=color))
+    cpu.extend(meter_block(_f(live.get("cpu_percent")), width=w_bar, color=color, rows=rows))
+    cpu.append(c("    temp", _DIM, color=color))
+    cpu.extend(temp_meter_block(_f(live.get("cpu_temp_c")), width=w_bar, color=color, rows=rows))
+    sections.append(cpu)
+
+    gpu_bits = []
+    if live.get("gpu_power_w") is not None:
+        gpu_bits.append(f"{live['gpu_power_w']} W")
+    if live.get("gpu_clock_mhz") is not None:
+        gpu_bits.append(f"{int(round(float(live['gpu_clock_mhz'])))} MHz")
+    gpu = title("GPU", "  ·  ".join(gpu_bits))
+    if live.get("gpu_percent") is None and live.get("gpu_note"):
+        gpu.append(c(f"    {live.get('gpu_note')}", _DIM, color=color))
+    else:
+        gpu.append(c("    load", _DIM, color=color))
+        gpu.extend(meter_block(_f(live.get("gpu_percent")), width=w_bar, color=color, rows=rows))
+    gpu.append(c("    temp", _DIM, color=color))
+    gpu.extend(temp_meter_block(_f(live.get("gpu_temp_c")), width=w_bar, color=color, rows=rows))
+    sections.append(gpu)
+
+    ram_extra = ""
+    if live.get("ram_used_gb") is not None and live.get("ram_total_gb") is not None:
+        ram_extra = f"{live['ram_used_gb']} / {live['ram_total_gb']} GB"
+    ram = title("RAM", ram_extra)
+    ram.extend(meter_block(_f(live.get("ram_percent")), width=w_bar, color=color, rows=rows))
+    sections.append(ram)
+
+    vu, vt = _f(live.get("gpu_vram_used_mb")), _f(live.get("gpu_vram_total_mb"))
+    if vu is not None and vt and vt > 0:
+        vram = title("VRAM", f"{round(vu / 1024, 1)} / {round(vt / 1024, 1)} GB")
+        vram.extend(meter_block(vu / vt * 100.0, width=w_bar, color=color, rows=rows))
+        sections.append(vram)
+
+    swap_pct = _f(live.get("swap_percent"))
+    if swap_pct is not None and swap_pct > 0.5:
+        swap_extra = ""
+        if live.get("swap_used_gb") is not None and live.get("swap_total_gb") is not None:
+            swap_extra = f"{live['swap_used_gb']} / {live['swap_total_gb']} GB"
+        swap = title("SWAP", swap_extra)
+        swap.extend(meter_block(swap_pct, width=w_bar, color=color, rows=rows))
+        sections.append(swap)
+
+    bat_pct = _f(live.get("battery_percent"))
+    if bat_pct is not None:
+        plugged = bool(live.get("battery_plugged"))
+        plug = "AC" if plugged else "battery"
+        style = _sev_style_battery(bat_pct, plugged=plugged)
+        bat = title("BAT", plug)
+        bat.append(c(f"    {int(round(bat_pct))}%", _BOLD, *style, color=color))
+        filled = int(round((max(0.0, min(100.0, bat_pct)) / 100.0) * w_bar))
+        bar_line = "    " + _painted_bar(filled, w_bar, style, color=color)
+        bat.extend([bar_line] * rows)
+        sections.append(bat)
+
+    ready = bool(live.get("rates_ready"))
+    io = title("NET")
+    io.append(
+        c(
+            f"    ↓{_fmt_rate(live.get('net_recv_mbs'), ready=ready)}"
+            f"  ↑{_fmt_rate(live.get('net_sent_mbs'), ready=ready)}  MB/s",
+            _DIM,
+            color=color,
+        )
+    )
+    sections.append(io)
+
+    lines: list[str] = []
+    for i, block in enumerate(sections):
+        if i:
+            lines.extend(gap)
+        lines.extend(block)
+    return "\n".join(_fit_line(ln, tw) for ln in lines)
+
+
 def format_watch_dashboard(payload: dict, color: bool = True) -> str:
     """
     Live board of block bars. Dense by default; two columns on wide terminals.
     """
+    if payload.get("resource") == "status":
+        return format_status_board(payload, color=color)
+
     rows = extract_metrics(payload)
     if not rows:
         from backend.format import format_human
@@ -929,20 +1112,25 @@ def live_chrome(
     refresh_slow: bool = False,
     color: bool = True,
 ) -> str:
-    """Minimal footer: status + prompt. Help only appears in flash (?)."""
+    """Quiet footer for a rice pane. Prompt appears only while typing."""
     watch = watching or "status"
-    graph_s = "on" if graph else "off"
-    slow_s = "  ·  refresh slow" if refresh_slow else ""
+    bits = [f"{interval:g}s"]
+    if graph:
+        bits.append("charts")
+    if refresh_slow:
+        bits.append("refresh slow")
     lines = [
         c("  " + "─" * min(52, max(36, term_width() - 4)), _DIM, color=color),
         c(f"  watching  {watch}", _BOLD, _WHITE, color=color)
-        + c(f"  ·  {interval:g}s  ·  charts {graph_s}{slow_s}  ·  ? help", _DIM, color=color),
-        c("  › ", _BOLD, _RED, color=color)
-        + c(draft, _WHITE, color=color)
-        + c("█", _DIM, color=color),
+        + c("  ·  " + "  ·  ".join(bits), _DIM, color=color),
     ]
+    if draft:
+        lines.append(
+            c("  › ", _BOLD, _RED, color=color)
+            + c(draft, _WHITE, color=color)
+            + c("█", _DIM, color=color)
+        )
     if flash:
-        # Allow multi-line help without permanently eating vertical space
         for i, part in enumerate(flash.split("\n")):
             lines.insert(1 + i, c(f"  {part}", _BOLD, _YEL if i == 0 else _DIM, color=color))
     tw = term_width()

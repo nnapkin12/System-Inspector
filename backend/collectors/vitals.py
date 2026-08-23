@@ -12,7 +12,7 @@ from .gpu import collect_gpus_vitals
 from .memory import collect_memory_vitals
 from .network import collect_network_vitals
 from .storage import collect_storage_vitals
-from .util import read_text, safe_dict
+from .util import read_text, safe_dict, sensors_temperatures
 
 # Prime cpu_percent so first real poll is meaningful
 psutil.cpu_percent(interval=None)
@@ -280,7 +280,7 @@ def get_vitals(needs: frozenset[str] | None = None) -> dict:
     if "temperatures" in want:
         all_temps = []
         try:
-            for name, entries in (psutil.sensors_temperatures(fahrenheit=False) or {}).items():
+            for name, entries in sensors_temperatures().items():
                 for entry in entries:
                     all_temps.append(
                         safe_dict(

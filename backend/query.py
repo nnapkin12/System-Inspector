@@ -86,7 +86,7 @@ ALIASES: dict[str, str] = {
 
 # Live vitals domains each resource actually reads (unioned for bundles).
 _RESOURCE_VITALS: dict[str, frozenset[str]] = {
-    "status": frozenset({"cpu", "memory", "gpus"}),
+    "status": frozenset({"cpu", "memory", "gpus", "rates", "battery"}),
     "cpu": frozenset({"cpu"}),
     "gpu": frozenset({"gpus"}),
     "memory": frozenset({"memory"}),

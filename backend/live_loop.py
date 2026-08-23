@@ -21,6 +21,7 @@ from backend.live_mode import query_is_liveable
 from backend.live_query import InventoryCache, poll_query_timed, run_query_timed
 from backend.collectors.gpu import nvml_live_begin, nvml_live_end
 from backend.query import is_known_token, parse_query
+from backend.smooth import MetricSmoother
 from backend.tui import (
     LiveHistory,
     enter_alt_screen,
@@ -33,6 +34,7 @@ from backend.tui import (
     paint_board_region,
     paint_chrome_region,
     render_graph,
+    status_identity_lines,
     term_height,
     term_width,
     _fit_line,
@@ -56,10 +58,11 @@ class LiveState:
     fetch_slow: bool = False
     force_fetch: bool = True
     history: LiveHistory = field(default_factory=lambda: LiveHistory(maxlen=90))
+    smoother: MetricSmoother = field(default_factory=MetricSmoother)
     chrome_row: int = 1
     board_fp: tuple | None = None
     logo_block: str = ""
-    logo_key: tuple[str, ...] = ()
+    logo_key: tuple = ()
     resized: bool = False
     need_full: bool = False
     painted: bool = False
@@ -119,7 +122,9 @@ def _visible_flash(state: LiveState) -> str:
 
 def _footer_line_count(state: LiveState) -> int:
     flash = _visible_flash(state)
-    base = 3  # separator, status, prompt
+    base = 2  # rule + watching
+    if state.draft:
+        base += 1
     if not flash:
         return base
     return base + flash.count("\n") + 1
@@ -155,10 +160,20 @@ def _board_fingerprint(state: LiveState) -> tuple:
 def _logo_block(state: LiveState, *, color: bool) -> str:
     if not state.show_logo:
         return ""
-    key = tuple(state.tokens)
+    facts: list[str] = []
+    ident: tuple = ()
+    data = (state.payload or {}).get("data") if state.payload else None
+    if isinstance(data, dict) and (state.payload or {}).get("resource") == "status":
+        ident = (
+            data.get("cpu"),
+            tuple(data.get("gpus") or []),
+            int((data.get("uptime_seconds") or 0) // 60),
+        )
+        facts = status_identity_lines(data, color=color, width=term_width())
+    key = (tuple(state.tokens), ident, color)
     if key != state.logo_key:
         watching = " ".join(state.tokens) or "status"
-        state.logo_block = logo_header(watching=watching, color=color) + "\n"
+        state.logo_block = logo_header(watching=watching, facts=facts, color=color) + "\n"
         state.logo_key = key
     return state.logo_block
 
@@ -248,6 +263,8 @@ def _apply_fetch_result(state: LiveState, payload: dict | None, timed_out: bool)
     else:
         state.refresh_slow = False
         state.fetch_slow = False
+        if payload and payload.get("ok"):
+            payload = state.smoother.apply_payload(payload, dt=state.interval) or payload
         state.payload = payload
         if state.payload and state.payload.get("ok"):
             state.last_good = state.payload
@@ -446,6 +463,7 @@ def _submit_draft(state: LiveState) -> str:
         return "chrome"
     state.tokens = new_tokens
     state.history = LiveHistory(maxlen=90)
+    state.smoother.reset()
     state.logo_key = ()
     state.board_fp = None
     state.fetch_pending = False

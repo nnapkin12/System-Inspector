@@ -1,9 +1,13 @@
 <img alt="SYSTEM INSPECT" src="assets/header-dark.png#gh-dark-mode-only" width="720">
 <img alt="SYSTEM INSPECT" src="assets/header-light.png#gh-light-mode-only" width="720">
 
+<div align="center">
+  <img src="assets/si-status.png" alt="si status — live hardware vitals" width="820">
+</div>
+
 A terminal utility to monitor temperatures, loads, disks, network activity, and check hardware specs.
 
-Run `si` or `sysinspect` from any folder — completely local
+Run `si` or `sysinspect` from any folder 
 
 ---
 
@@ -31,6 +35,7 @@ source ~/.bashrc
 ### Components
 
 ```bash
+si status          # main vitals, nice looking terminal fetch
 si gpu             # GPU stats
 si cpu             # CPU stats
 si ram             # Memory/swap
