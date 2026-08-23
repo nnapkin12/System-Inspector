@@ -46,8 +46,8 @@ def main(argv: list[str] | None = None) -> int:
 
     force_live = False
     force_graph = False
-    if argv and argv[0].lower() in ("watch", "graph", "live"):
-        if argv[0].lower() == "graph":
+    if argv and argv[0].lower() in ("watch", "graph", "graphs", "live"):
+        if argv[0].lower() in ("graph", "graphs"):
             force_graph = True
         force_live = True
         argv = argv[1:]
@@ -78,8 +78,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--graph",
+        "--graphs",
+        dest="graph",
         action="store_true",
-        help="Watch: also draw sparklines (default is large bar meters only)",
+        help="Graph-only live plots (no bars). Same as: si graph cpu",
     )
     parser.add_argument(
         "--no-logo",
@@ -98,6 +100,14 @@ def main(argv: list[str] | None = None) -> int:
 
     tokens = list(args.tokens) + list(unknown)
     tokens = [t for t in tokens if not t.startswith("-")]
+    kept: list[str] = []
+    for t in tokens:
+        if t.lower() in ("graph", "graphs"):
+            force_graph = True
+            force_live = True
+        else:
+            kept.append(t)
+    tokens = kept
     if force_live and not tokens:
         tokens = ["status"]
     if args.help or not tokens or [t.lower() for t in tokens] == ["help"]:
@@ -137,10 +147,11 @@ def main(argv: list[str] | None = None) -> int:
             body = decorate_human(body, color=color)
         return body
 
+    # Graphs need a refresh loop — a single snapshot has no history to draw.
     live = should_enter_live(
         tokens,
-        force_live=force_live,
-        once=args.once,
+        force_live=force_live or bool(show_graph and not args.json and not plain),
+        once=False if show_graph and not args.json and not plain else args.once,
         json_mode=args.json,
         plain=plain,
         stdin_tty=sys.stdin.isatty(),

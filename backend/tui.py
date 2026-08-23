@@ -4,7 +4,6 @@ Terminal chrome for System Inspector CLI: banner, meters, live charts.
 
 from __future__ import annotations
 
-import collections
 import re
 import shutil
 import sys
@@ -1092,7 +1091,7 @@ LIVE_HELP_LINES = (
     "type a word, then Enter — same as si:",
     LIVE_TYPE_HINT,
     "status / clear → overview",
-    "quit → leave   ·   graph → charts   ·   faster / slower → refresh",
+    "quit → leave   ·   graph cpu → plots   ·   bars → meters   ·   faster / slower",
     "Esc clears typing   ·   Ctrl+C also quits",
 )
 
@@ -1116,7 +1115,7 @@ def live_chrome(
     watch = watching or "status"
     bits = [f"{interval:g}s"]
     if graph:
-        bits.append("charts")
+        bits.append("graph")
     if refresh_slow:
         bits.append("refresh slow")
     lines = [
@@ -1227,84 +1226,3 @@ def extract_plot_series(payload: dict) -> list[SeriesPoint]:
         if row.get("rate") is not None:
             series.append((f"{label}", row["rate"], "rate"))
     return series
-
-
-class LiveHistory:
-    def __init__(self, maxlen: int = 90) -> None:
-        self.maxlen = maxlen
-        # name -> (unit, deque)
-        self.series: dict[str, tuple[str, collections.deque[float]]] = {}
-        self._active: set[str] = set()
-
-    def push(self, points: list[SeriesPoint]) -> None:
-        seen: set[str] = set()
-        for name, val, unit in points:
-            seen.add(name)
-            if name not in self.series:
-                self.series[name] = (unit, collections.deque(maxlen=self.maxlen))
-            else:
-                # keep unit from first sight
-                unit = self.series[name][0]
-            if val is None:
-                continue
-            try:
-                self.series[name][1].append(float(val))
-            except (TypeError, ValueError):
-                continue
-        for k in list(self.series.keys()):
-            if k not in seen:
-                del self.series[k]
-        self._active = seen
-
-    def nonempty(self) -> bool:
-        return any(len(dq) > 0 for _, dq in self.series.values())
-
-    def by_unit(self, unit: str) -> dict[str, collections.deque[float]]:
-        return {n: dq for n, (u, dq) in self.series.items() if u == unit and dq}
-
-
-def render_graph(history: LiveHistory, title: str, color: bool = True) -> str:
-    """Fixed-scale sparklines. A flat line means quiet, not a broken axis."""
-    if not history.nonempty():
-        return c("  (graph: collecting samples…)", _DIM, color=color)
-
-    blocks = " ▁▂▃▄▅▆▇█"
-    lines = [c(f"  {title}", _BOLD, color=color)]
-
-    def spark(vals: list[float], lo: float, hi: float) -> str:
-        span = (hi - lo) or 1.0
-        out = []
-        for v in vals[-min(60, max(10, term_width() - 30)) :]:
-            t = (v - lo) / span
-            t = max(0.0, min(1.0, t))
-            out.append(blocks[min(8, int(t * 8))])
-        return "".join(out)
-
-    drew = False
-    for unit, lo, hi, suffix in (
-        ("pct", 0.0, 100.0, "%"),
-        ("temp", 20.0, 100.0, "°C"),
-        ("rate", 0.0, 100.0, " MB/s"),
-    ):
-        data = history.by_unit(unit)
-        if not data:
-            continue
-        drew = True
-        lines.append(c(f"  ── {unit} ({lo:g}–{hi:g}{suffix}) ──", _DIM, color=color))
-        for name, dq in data.items():
-            vals = list(dq)
-            if not vals:
-                continue
-            use_hi = hi
-            use_lo = lo
-            if unit == "rate":
-                use_hi = max(10.0, max(vals) * 1.25)
-            last = vals[-1]
-            bar = spark(vals, use_lo, use_hi)
-            lines.append(
-                f"  {name[:18]:18} {bar}  "
-                + c(f"{last:.1f}{suffix if unit != 'rate' else ' MB/s'}", _BOLD, color=color)
-            )
-    if not drew:
-        return c("  (graph: no numeric series yet)", _DIM, color=color)
-    return "\n".join(lines)

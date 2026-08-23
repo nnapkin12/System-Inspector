@@ -21,19 +21,17 @@ from backend.live_mode import query_is_liveable
 from backend.live_query import InventoryCache, poll_query_timed, run_query_timed
 from backend.collectors.gpu import nvml_live_begin, nvml_live_end
 from backend.query import is_known_token, parse_query
+from backend.graphs import LiveHistory, render_graph_board, series_from_payload
 from backend.smooth import MetricSmoother
 from backend.tui import (
-    LiveHistory,
     enter_alt_screen,
     extract_metrics,
-    extract_plot_series,
     leave_alt_screen,
     live_chrome,
     live_help_flash,
     logo_header,
     paint_board_region,
     paint_chrome_region,
-    render_graph,
     status_identity_lines,
     term_height,
     term_width,
@@ -46,6 +44,7 @@ class LiveState:
     tokens: list[str]
     interval: float
     show_graph: bool
+    graph_only: bool = False
     show_logo: bool = False
     draft: str = ""
     flash: str = ""
@@ -57,7 +56,7 @@ class LiveState:
     fetch_pending: bool = False
     fetch_slow: bool = False
     force_fetch: bool = True
-    history: LiveHistory = field(default_factory=lambda: LiveHistory(maxlen=90))
+    history: LiveHistory = field(default_factory=lambda: LiveHistory(maxlen=180))
     smoother: MetricSmoother = field(default_factory=MetricSmoother)
     chrome_row: int = 1
     board_fp: tuple | None = None
@@ -82,8 +81,16 @@ def normalize_live_input(parts: list[str]) -> tuple[list[str] | None, str]:
 
     if len(low) == 1 and low[0] in ("quit", "exit", "q"):
         return None, "__quit__"
-    if len(low) == 1 and low[0] in ("graph", "charts"):
-        return None, "__graph__"
+    if low and low[0] in ("graph", "graphs", "charts"):
+        rest = low[1:]
+        if not rest:
+            return None, "__graph__"
+        tokens, flash = normalize_live_input(rest)
+        if tokens is None:
+            return None, flash
+        return tokens, "__graph__"
+    if len(low) == 1 and low[0] in ("bars", "meters"):
+        return None, "__bars__"
     if len(low) == 1 and low[0] in ("faster", "fast"):
         return None, "__faster__"
     if len(low) == 1 and low[0] in ("slower", "slow"):
@@ -139,8 +146,11 @@ def _board_fingerprint(state: LiveState) -> tuple:
     fp: list[tuple] = []
     if state.show_logo:
         fp.append(("logo", state.logo_key))
-    if state.show_graph:
-        fp.append(("graph", len(state.history.series)))
+    if state.graph_only:
+        fp.append(("graph", state.history.fingerprint()))
+        if state.refresh_slow:
+            fp.append(("slow",))
+        return tuple(fp)
     if state.refresh_slow:
         fp.append(("slow",))
     if state.payload is not None:
@@ -178,19 +188,39 @@ def _logo_block(state: LiveState, *, color: bool) -> str:
     return state.logo_block
 
 
-def _build_board(state: LiveState, render_once: Callable[..., str], color: bool) -> str:
+def _build_board(
+    state: LiveState,
+    render_once: Callable[..., str],
+    color: bool,
+    *,
+    max_rows: int | None = None,
+) -> str:
     watching = " ".join(state.tokens) or "status"
     parts: list[str] = []
     logo = _logo_block(state, color=color)
+    logo_lines = 0
     if logo:
         parts.append(logo.rstrip("\n"))
+        logo_lines = logo.count("\n") + 1
+    if state.graph_only:
+        budget = None
+        if max_rows is not None:
+            budget = max(8, max_rows - logo_lines - 1)
+        parts.append(
+            render_graph_board(
+                state.history,
+                interval=state.interval,
+                color=color,
+                watching=watching,
+                width=term_width(),
+                height=budget,
+            )
+        )
+        return "\n".join(parts)
     if state.payload is not None:
         parts.append(render_once(state.payload, live=True))
     elif state.refresh_slow:
         parts.append("[Refresh Slow]")
-    if state.show_graph:
-        parts.append("")
-        parts.append(render_graph(state.history, title=f"live · {watching}", color=color))
     return "\n".join(parts)
 
 
@@ -200,7 +230,7 @@ def _build_chrome(state: LiveState, color: bool) -> str:
         interval=state.interval,
         draft=state.draft,
         flash=_visible_flash(state),
-        graph=state.show_graph,
+        graph=state.graph_only,
         refresh_slow=state.refresh_slow,
         color=color,
     )
@@ -218,7 +248,7 @@ def _layout_frame(
     chrome_row = max(1, th - footer_rows + 1)
     max_board = max(1, chrome_row - 2)
 
-    raw = _build_board(state, render_once, color)
+    raw = _build_board(state, render_once, color, max_rows=max_board)
     width = term_width()
     lines = [_fit_line(ln, width) for ln in raw.splitlines()[:max_board]]
     return "\n".join(lines), chrome, chrome_row
@@ -263,13 +293,13 @@ def _apply_fetch_result(state: LiveState, payload: dict | None, timed_out: bool)
     else:
         state.refresh_slow = False
         state.fetch_slow = False
-        if payload and payload.get("ok"):
+        if payload and payload.get("ok") and not state.graph_only:
             payload = state.smoother.apply_payload(payload, dt=state.interval) or payload
         state.payload = payload
         if state.payload and state.payload.get("ok"):
             state.last_good = state.payload
-    if state.show_graph and state.payload is not None:
-        state.history.push(extract_plot_series(state.payload))
+    if state.graph_only and state.payload is not None:
+        state.history.push(series_from_payload(state.payload))
     fp = _board_fingerprint(state)
     if fp == state.board_fp and state.painted:
         return "none"
@@ -316,6 +346,7 @@ def run_interactive_live(
         tokens=list(tokens),
         interval=interval,
         show_graph=show_graph,
+        graph_only=show_graph,
         show_logo=show_logo,
     )
     cache = InventoryCache()
@@ -437,8 +468,25 @@ def _submit_draft(state: LiveState) -> str:
     if msg == "__quit__":
         return "quit"
     if msg == "__graph__":
-        state.show_graph = not state.show_graph
-        _set_flash(state, "charts on" if state.show_graph else "charts off", 2.0)
+        state.show_graph = True
+        state.graph_only = True
+        if new_tokens:
+            state.tokens = new_tokens
+            state.smoother.reset()
+            state.logo_key = ()
+        state.history = LiveHistory(maxlen=180)
+        state.board_fp = None
+        _set_flash(state, f"graphing {' '.join(state.tokens) or 'status'}", 2.0)
+        state.force_fetch = True
+        state.fetch_pending = False
+        state.need_full = True
+        return "full"
+    if msg == "__bars__":
+        state.show_graph = False
+        state.graph_only = False
+        state.history = LiveHistory(maxlen=180)
+        state.board_fp = None
+        _set_flash(state, "meters on", 2.0)
         state.force_fetch = True
         state.fetch_pending = False
         state.need_full = True
@@ -462,7 +510,7 @@ def _submit_draft(state: LiveState) -> str:
             return "full"
         return "chrome"
     state.tokens = new_tokens
-    state.history = LiveHistory(maxlen=90)
+    state.history = LiveHistory(maxlen=180)
     state.smoother.reset()
     state.logo_key = ()
     state.board_fp = None
@@ -490,7 +538,7 @@ def run_piped_live(
     """JSON / plain / non-TTY refresh loop (scripts and pipes)."""
     import json
 
-    history = LiveHistory(maxlen=90)
+    history = LiveHistory(maxlen=180)
     title = " ".join(tokens) or "status"
     logo_block = ""
     if show_logo and not json_mode:
@@ -524,13 +572,20 @@ def run_piped_live(
                         body += "\n[Refresh Slow]"
                     print(logo_block + body, end="")
                 else:
-                    print(logo_block + render_once(payload or {}, live=True), end="")
+                    if show_graph:
+                        if payload:
+                            history.push(series_from_payload(payload))
+                        body = render_graph_board(
+                            history,
+                            interval=interval,
+                            color=color,
+                            watching=title,
+                        )
+                        print(logo_block + body, end="")
+                    else:
+                        print(logo_block + render_once(payload or {}, live=True), end="")
                     if refresh_slow:
                         print("\n[Refresh Slow]", end="")
-                    if show_graph and payload:
-                        history.push(extract_plot_series(payload))
-                        print()
-                        print(render_graph(history, title=f"live · {title}", color=color), end="")
                 sys.stdout.write("\n\033[J")
                 sys.stdout.flush()
             if not payload.get("ok") and json_mode and not timed_out:

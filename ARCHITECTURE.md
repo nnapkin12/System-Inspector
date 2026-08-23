@@ -44,7 +44,8 @@ flowchart LR
 | `backend/resources.py` | Resource builders, field filters, `run_query` |
 | `backend/fields.py` | OS / net field token sets shared by query + format |
 | `backend/format.py` | Terminal formatting |
-| `backend/tui.py` | Live UI, banners, sparkline graphs |
+| `backend/tui.py` | Live UI, banners, meters |
+| `backend/graphs.py` | Isolated Braille graph mode (`si graph` / `--graph`) |
 | `backend/live_mode.py` | Live vs snapshot policy |
 | `backend/live_loop.py` | Interactive / piped refresh loop |
 | `backend/live_query.py` | Live-mode query timeout + inventory reuse |

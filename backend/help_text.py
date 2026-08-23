@@ -73,7 +73,19 @@ Stuck?  si help
   si gpu --once      one snapshot of a live-worthy command
 
   `si live …` still works. While live: type cpu / gpu / temps to switch
-  · faster/slower · graph · ? help · Esc clears typing · Ctrl+C quit
+  · faster/slower · graph cpu · bars · ? help · Esc clears typing · Ctrl+C quit
+
+── Graphs (separate from bars) ─────────────────────────────
+
+  Must say graph. Regular si status / si cpu stay bars only.
+
+  si graph                status vitals as Braille plots
+  si graph cpu            CPU load + temp
+  si graph gpu temp       GPU temperature
+  si cpu gpu --graph      same idea via a flag (--graphs also works)
+
+  Output is graphs only — no progress bars. Samples are raw (not smoothed).
+  Type bars then Enter to go back to meters.
 
 ── Flags ───────────────────────────────────────────────────
 
@@ -83,7 +95,7 @@ Stuck?  si help
   --redact           mask serials, UUIDs, boot_id, sku (sharing / logs)
   --verbose / -v     extra JSON fields (connections are always full)
   --interval 0.5     live refresh speed
-  --graph            sparklines in live mode
+  --graph / --graphs graph-only Braille plots (no bars)
   --no-logo          hide the SI ASCII header (on by default)
   --pci              extra PCI detail with si scan
 

@@ -203,7 +203,8 @@ You can change which component you're monitoring while it's live — instead of 
 | `temps` | temperatures |
 | `ram` / `disk` / `net` | those meters |
 | `status` or `clear` | back to overview |
-| `graph` | toggle sparklines |
+| `graph` / `graph cpu` | switch to graph-only plots |
+| `bars` / `meters` | back to progress bars |
 | `faster` / `slower` | change refresh speed |
 | `quit` | leave live mode |
 
@@ -215,14 +216,19 @@ Shortcuts:
 - 'Esc' — clear what you were typing
 - 'Ctrl+C' — quit
 
-### Sparklines (optional — not default)
+### Graphs (separate from bars)
+
+Must say `graph` — regular `si status` / `si cpu` stay bars only. Output is Braille line plots, no meters. Samples are raw (not smoothed).
 
 ```bash
-si graph temps
-si live cpu --graph
+si graph
+si graph cpu
+si graph gpu temp
+si cpu gpu --graph
+si gpu --graphs
 ```
 
-Or type `graph` then Enter while already in live mode.
+While live, type `graph` or `graph cpu` then Enter. Type `bars` to return to meters.
 
 ---
 
@@ -238,7 +244,7 @@ Add these to any command:
 | `--verbose` or `-v` | extra JSON fields (connections always list every socket) |
 | `--once` | one snapshot even for sensors (cpu, gpu, temps, …) |
 | `--interval 0.5` | live update every half second |
-| `--graph` | add sparklines in live mode |
+| `--graph` / `--graphs` | graph-only Braille plots (no bars) |
 | `--no-logo` | hide the System Inspector ASCII header (shown by default) |
 | `--pci` | with `si scan`, list more PCI devices (long) |
 

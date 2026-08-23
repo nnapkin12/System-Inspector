@@ -67,3 +67,24 @@ def test_normalize_accepts_gpu():
     tokens, flash = normalize_live_input(["gpu", "temps"])
     assert tokens == ["gpu", "temps"]
     assert "watching" in flash
+
+
+def test_normalize_graph_alone_is_meta():
+    tokens, flash = normalize_live_input(["graph"])
+    assert tokens is None
+    assert flash == "__graph__"
+    tokens, flash = normalize_live_input(["graphs"])
+    assert tokens is None
+    assert flash == "__graph__"
+
+
+def test_normalize_graph_cpu_switches_query():
+    tokens, flash = normalize_live_input(["graph", "cpu", "gpu"])
+    assert tokens == ["cpu", "gpu"]
+    assert flash == "__graph__"
+
+
+def test_normalize_bars_is_meta():
+    tokens, flash = normalize_live_input(["bars"])
+    assert tokens is None
+    assert flash == "__bars__"
