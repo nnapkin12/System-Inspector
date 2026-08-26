@@ -18,6 +18,7 @@ CANONICAL = (
     "temps",
     "fans",
     "board",
+    "display",
     "os",
     "disk",
     "net",
@@ -51,6 +52,10 @@ ALIASES: dict[str, str] = {
     "mb": "board",
     "mobo": "board",
     "mainboard": "board",
+    "display": "display",
+    "monitor": "display",
+    "monitors": "display",
+    "screen": "display",
     "os": "os",
     "system": "os",
     # "host" = full OS block; use field "hostname" for the host name only

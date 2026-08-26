@@ -155,6 +155,23 @@ def test_format_human_scan_lists_components():
     assert "Samsung SSD" in out
 
 
+def test_format_human_scan_lists_displays():
+    payload = {
+        "ok": True,
+        "resource": "scan",
+        "data": {
+            "summary": {"hostname": "box", "os": "Linux", "cpu": "CPU", "gpus": [], "ram_gb": 8},
+            "counts": {"total_components": 1},
+            "components": [
+                {"category": "display", "name": "BOE panel", "connector": "eDP-1"},
+            ],
+        },
+    }
+    out = format_human(payload, color=False)
+    assert "BOE panel" in out
+    assert "display" in out
+
+
 def test_format_human_gpu_shows_note_when_no_sensors():
     payload = {
         "ok": True,

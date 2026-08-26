@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .cpu import collect_cpu_inventory
+from .display import collect_displays
 from .gpu import collect_gpus_inventory
 from .memory import collect_memory_inventory
 from .motherboard import collect_board, collect_pci_devices
@@ -19,6 +20,7 @@ def get_inventory(include_pci: bool = True) -> dict:
     os_info = collect_os()
     cpu = collect_cpu_inventory()
     gpus = collect_gpus_inventory()
+    displays = collect_displays()
     memory = collect_memory_inventory()
     storage = collect_storage_inventory()
     network = collect_network_inventory()
@@ -27,6 +29,7 @@ def get_inventory(include_pci: bool = True) -> dict:
     components.append(os_info)
     components.append(cpu)
     components.extend(gpus)
+    components.extend(displays)
     components.extend(memory)
     components.extend(storage)
     components.extend(network)
@@ -52,6 +55,7 @@ def get_inventory(include_pci: bool = True) -> dict:
         counts={
             "total_components": len(components),
             "gpus": len(gpus),
+            "displays": len(displays),
             "storage_entries": len(storage),
             "network_entries": len(network),
         },

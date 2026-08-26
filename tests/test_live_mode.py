@@ -16,6 +16,8 @@ def test_os_and_scan_are_snapshots():
     assert query_is_liveable(["scan"]) is False
     assert query_is_liveable(["version"]) is False
     assert query_is_liveable(["uptime"]) is False
+    assert query_is_liveable(["display"]) is False
+    assert query_is_liveable(["monitor"]) is False
 
 
 def test_net_slices_are_snapshots():

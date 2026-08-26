@@ -2,7 +2,7 @@
 Which queries belong in the live board vs a one-shot print.
 
 Live-worthy: sensors that change (cpu, gpu, ram, temps, …).
-Snapshot: facts (os, board, scan) and expensive / external net slices.
+Snapshot: facts (os, board, display, scan) and expensive / external net slices.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ LIVE_RESOURCES = frozenset(
 SNAPSHOT_RESOURCES = frozenset(
     {
         "board",
+        "display",
         "os",
         "scan",
         "uptime",

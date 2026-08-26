@@ -58,6 +58,7 @@ flowchart LR
 Each file under `backend/collectors/` owns one domain:
 
 - **`inventory.py`** — static hardware list via other collectors
+- **`display.py`** — connected DRM outputs, EDID name / resolution / refresh Hz
 - **`vitals.py`** — live CPU/RAM/GPU/disk/net rates, fans, battery
 - **`util.py`** — `run_cmd()` (subprocess, no shell, timeouts → `None`), `read_text()`, `safe_dict()`
 
@@ -93,7 +94,7 @@ Tests cover single-GPU, dual identical NVIDIA (two PCI slots), and iGPU + dGPU l
 
 ## Live mode
 
-On a TTY, sensor commands (`cpu`, `gpu`, `ram`, `temps`, `status`, `disk`, `net` throughput, `fans`, `battery`) enter the live board. Facts (`os`, `board`, `scan`, `version`, `uptime`, `all`) and expensive net slices (`public`, `connections`, `listen`, …) print once. `--once`, `--json`, and `--plain` force a snapshot. `si live …` still forces the refresh loop.
+On a TTY, sensor commands (`cpu`, `gpu`, `ram`, `temps`, `status`, `disk`, `net` throughput, `fans`, `battery`) enter the live board. Facts (`os`, `board`, `display`, `scan`, `version`, `uptime`, `all`) and expensive net slices (`public`, `connections`, `listen`, …) print once. `--once`, `--json`, and `--plain` force a snapshot. `si live …` still forces the refresh loop.
 
 `live_loop` fetches on a worker (`run_query_timed`), then paints. The prompt stays on the **bottom rows**; value ticks rewrite the meters above it and do not redraw the prompt. Keystrokes only rewrite the prompt unless footer height changes (help / flash). Collection is not done inside paint. Inventory is reused for **30s** across ticks so lspci/DMI is not repeated every second.
 

@@ -409,6 +409,19 @@ def resource_board(snap: Snapshot) -> dict:
     )
 
 
+def resource_display(snap: Snapshot) -> dict:
+    inv = snap.inventory()
+    displays = [c for c in inv.get("components", []) if c.get("category") == "display"]
+    return _ok(
+        "display",
+        {
+            "count": len(displays),
+            "displays": displays,
+            "note": None if displays else "No connected display found.",
+        },
+    )
+
+
 def resource_os(snap: Snapshot) -> dict:
     inv = snap.inventory()
     for c in inv.get("components", []):
@@ -555,6 +568,7 @@ def resource_all(snap: Snapshot) -> dict:
         ("memory", resource_memory),
         ("temps", resource_temps),
         ("board", resource_board),
+        ("display", resource_display),
         ("os", resource_os),
         ("disk", resource_disk),
         ("net", resource_net),
@@ -585,6 +599,7 @@ HANDLERS: dict[str, Callable[..., dict]] = {
     "temps": resource_temps,
     "fans": resource_fans,
     "board": resource_board,
+    "display": resource_display,
     "os": resource_os,
     "disk": resource_disk,
     "net": resource_net,
@@ -774,6 +789,8 @@ def _filter_name(resource: str | None, data: Any) -> Any:
         }
     if resource == "os":
         return {"name": data.get("name") or data.get("pretty_name")}
+    if resource == "display":
+        return {"names": [d.get("name") for d in (data.get("displays") or [])]}
     if isinstance(data, dict) and "name" in data:
         return {"name": data.get("name")}
     return data

@@ -40,6 +40,7 @@ si gpu             # GPU stats
 si cpu             # CPU stats
 si ram             # Memory/swap
 si motherboard     # Board/ BIOS info
+si display         # connected displays (resolution, refresh Hz)
 si battery         # laptop batt
 si fans            # fans speed, sometimes not reported
 si disk            # disks and free space
@@ -67,7 +68,7 @@ si cpu load
 
 ### Live terminal refresh (default on a TTY)
 
-Sensors update by themselves. others like `si os` / `si scan` print once.
+Sensors update by themselves. others like `si os` / `si display` / `si scan` print once.
 
 ```bash
 si gpu                        # live GPU board

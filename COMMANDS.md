@@ -25,6 +25,7 @@ si gpu             # GPU(s) stats (name, load, temp, VRAM, power)
 si cpu             # CPU stats (model, load, cores, freq, temp)
 si ram             # memory / swap
 si motherboard     # board / BIOS info
+si display         # connected displays (resolution, refresh Hz)
 si battery         # laptop battery (if present)
 si fans            # fan speeds (sometimes not reported)
 si disk            # disks and free space
@@ -39,6 +40,7 @@ Also works (same commands):
 | `graphics`, `nvidia`, `vram` | `gpu` |
 | `memory`, `mem` | `ram` |
 | `board`, `mb`, `mobo` | `motherboard` |
+| `monitor`, `monitors`, `screen` | `display` |
 | `bat` | `battery` |
 | `fan`, `cooling` | `fans` |
 | `storage`, `ssd`, `drive` | `disk` |
@@ -183,7 +185,7 @@ si gpu --interval 0.5         # faster refresh (0.5s)
 si gpu --once                 # one snapshot
 ```
 
-These are one snapshot: `si os`, `si motherboard`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
+These are one snapshot: `si os`, `si motherboard`, `si display`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
 
 `si live …` is still accepted.
 

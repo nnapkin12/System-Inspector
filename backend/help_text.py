@@ -11,14 +11,16 @@ Stuck?  si help
   si cpu             CPU stats (model, load, cores, freq, temp)
   si ram             memory / swap
   si motherboard     board / BIOS
+  si display         connected displays (resolution, refresh Hz)
   si battery         laptop battery (if present)
   si fans            fan speeds (sometimes not reported)
   si disk            disks and free space
   si scan            full hardware inventory
 
   Also: processor→cpu  graphics/nvidia/vram→gpu  memory/mem→ram
-        board/mb/mobo→motherboard  bat→battery  fan/cooling→fans
-        storage/ssd/drive→disk  inventory/hw/hardware→scan
+        board/mb/mobo→motherboard  monitor/monitors/screen→display
+        bat→battery  fan/cooling→fans  storage/ssd/drive→disk
+        inventory/hw/hardware→scan
 
 ── Metrics & system info ───────────────────────────────────
 
@@ -68,8 +70,8 @@ Stuck?  si help
   si gpu             si cpu temps         si status
   si temps           si ram               si net
 
-  Snapshots (print once):  si os  si motherboard  si scan  si version
-                           si net public  si net connections
+  Snapshots (print once):  si os  si motherboard  si display  si scan
+                           si version  si net public  si net connections
   si gpu --once      one snapshot of a live-worthy command
 
   `si live …` still works. While live: type cpu / gpu / temps to switch

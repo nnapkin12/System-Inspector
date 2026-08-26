@@ -42,6 +42,18 @@ def deg(v: Any) -> str:
         return "—"
 
 
+def fmt_hz(v: Any) -> str:
+    if v is None:
+        return "—"
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(x - round(x)) < 0.05:
+        return f"{int(round(x))} Hz"
+    return f"{x:g} Hz"
+
+
 def fmt_uptime(secs: Any) -> str:
     if secs is None:
         return "—"
@@ -260,6 +272,37 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             lines.append(f"BIOS date     {bios.get('date')}")
         if chassis.get("name") and chassis.get("name") != "Chassis":
             lines.append(f"Chassis       {chassis.get('name')}")
+        return "\n".join(lines)
+
+    if r == "display":
+        if fields == {"name"}:
+            names = d.get("names")
+            if names is None:
+                names = [x.get("name") for x in (d.get("displays") or [])]
+            names = [n for n in names if n]
+            if not names:
+                return "Display  (none connected)"
+            return "Display\n" + "\n".join(f"  {n}" for n in names)
+        displays = d.get("displays") or []
+        if not displays:
+            return "Display  (none connected)"
+        lines = ["Display"]
+        for mon in displays:
+            conn = mon.get("connector") or mon.get("kind") or "output"
+            bits: list[str] = []
+            w, h = mon.get("width"), mon.get("height")
+            if w and h:
+                bits.append(f"{w}x{h}")
+            if mon.get("refresh_hz") is not None:
+                bits.append(fmt_hz(mon.get("refresh_hz")))
+            if mon.get("refresh_max_hz") is not None:
+                bits.append(f"panel {fmt_hz(mon.get('refresh_max_hz'))}")
+            name = mon.get("name")
+            if name and name != conn:
+                bits.append(str(name))
+            elif mon.get("kind") in ("eDP", "LVDS"):
+                bits.append("built-in")
+            lines.append(f"  {conn:12}  " + "  ·  ".join(bits) if bits else f"  {conn}")
         return "\n".join(lines)
 
     if r == "os":
@@ -487,6 +530,7 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
         order = (
             "cpu",
             "gpu",
+            "display",
             "memory",
             "disk",
             "partition",
@@ -524,6 +568,7 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             "memory",
             "temps",
             "board",
+            "display",
             "os",
             "disk",
             "net",
