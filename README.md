@@ -120,13 +120,14 @@ Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph`
 
 ## Optional web UI
 
-The product is still the terminal. If you want a page in a browser:
+If you want a GUI:
 
 ```bash
 si gui
+si web
 ```
 
-It stays on this machine (`127.0.0.1:8000`) and prints a link to copy. Ctrl+C stops it. `si web` is the same. `--port` if 8000 is busy; `--redact` masks serials there too.
+All stays on your machine (`127.0.0.1:8000`) and prints a link to copy. Ctrl+C stops it. `si web` is the same. `--port` if 8000 is busy(default); `--redact` masks serials there too.
 
 ---
 
