@@ -126,13 +126,14 @@ Local network info — interfaces, IPs, connections, DNS, routing, WiFi. Everyth
 si net                  # overview (speed, gateway, DNS, IPv4 / IPv6)
 si net connections      # connections to your pc — every socket
 si net ip               # IPv4 / IPv6 addresses per interface
-si net wifi             # connected SSID + nearby networks (nmcli)
+si net wifi             # SSID, signal, channel, nearby APs (nmcli)
 ```
 
 More:
 
 ```bash
 si net listen           # ports waiting for inbound connections
+si net ping             # ping the default gateway (LAN, 3 packets)
 si net dns              # DNS servers
 si net gateway          # default router
 si net routes           # routing table
@@ -151,13 +152,15 @@ Also works:
 | `nameservers`, `resolvers` | `net dns` |
 | `routing` | `net routes` |
 | `wlan`, `wireless` | `net wifi` |
+| `ping`, `latency`, `rtt` | `net ping` |
 | `publicip` | `net public` |
 
 Notes:
 
 - `connections` and `listen` may need `sudo` for a full process list on some systems.
 - `connections` lines are color-coded (green / yellow / red); problem lines sort to the top. Use `--json` for CPU, RTT, and other raw fields.
-- `wifi` uses NetworkManager (`nmcli`) when available.
+- `wifi` uses NetworkManager (`nmcli`) when available; `iw` fills in dBm for the connected AP.
+- `ping` is ICMP to your default gateway only — a LAN check, not a speedtest.
 - `public` calls a simple IP service over HTTPS — the only command here that uses the internet.
 
 Live monitoring (default on a TTY):
@@ -185,7 +188,7 @@ si gpu --interval 0.5         # faster refresh (0.5s)
 si gpu --once                 # one snapshot
 ```
 
-These are one snapshot: `si os`, `si motherboard`, `si display`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`.
+These are one snapshot: `si os`, `si motherboard`, `si display`, `si scan`, `si version`, `si uptime`, `si net public`, `si net connections`, `si net ping`, `si net wifi`.
 
 `si live …` is still accepted.
 
@@ -234,6 +237,21 @@ While live, type `graph` or `graph cpu` then Enter. Type `bars` to return to met
 
 ---
 
+## Optional web UI
+
+A small local page. Not a replacement for the CLI.
+
+```bash
+si gui
+si web              # same
+si gui --port 8000
+si gui --redact     # mask serials / UUIDs in the page
+```
+
+It prints a link (`http://127.0.0.1:8000`). Paste that in a browser. Ctrl+C in the terminal stops the server. Nothing listens on a port unless you run this.
+
+---
+
 ## Flags
 
 Add these to any command:
@@ -249,6 +267,7 @@ Add these to any command:
 | `--graph` / `--graphs` | graph-only Braille plots (no bars) |
 | `--no-logo` | hide the System Inspector ASCII header (shown by default) |
 | `--pci` | with `si scan`, list more PCI devices (long) |
+| `--port 8000` | listen port for `si gui` (localhost only) |
 
 ```bash
 si status --plain

@@ -10,7 +10,7 @@ import psutil
 from .cpu import collect_cpu_vitals
 from .gpu import collect_gpus_vitals
 from .memory import collect_memory_vitals
-from .network import collect_network_vitals
+from .network import collect_network_vitals, keep_nic
 from .storage import collect_storage_vitals
 from .util import read_text, safe_dict, sensors_temperatures
 
@@ -24,6 +24,7 @@ _last_rates: dict = {
     "disk_write_mbs": 0.0,
     "net_recv_mbs": 0.0,
     "net_sent_mbs": 0.0,
+    "per_nic": [],
     "ready": False,
 }
 
@@ -48,33 +49,43 @@ def _disk_counters() -> tuple[int, int]:
     return total.read_bytes, total.write_bytes
 
 
-def _net_counters() -> tuple[int, int]:
-    """Network bytes excluding loopback."""
+def _net_sample() -> tuple[int, int, dict[str, tuple[int, int]]]:
+    """Totals exclude loopback. per-nic list also hides docker/veth/bridges."""
     per = psutil.net_io_counters(pernic=True) or {}
     recv = sent = 0
+    nics: dict[str, tuple[int, int]] = {}
     for name, c in per.items():
         if name == "lo" or name.startswith("lo:"):
             continue
         recv += c.bytes_recv
         sent += c.bytes_sent
+        if keep_nic(name):
+            nics[name] = (c.bytes_recv, c.bytes_sent)
     if recv or sent:
-        return recv, sent
+        return recv, sent, nics
     total = psutil.net_io_counters(pernic=False)
     if not total:
-        return 0, 0
-    return total.bytes_recv, total.bytes_sent
+        return 0, 0, nics
+    return total.bytes_recv, total.bytes_sent, nics
+
+
+def _net_counters() -> tuple[int, int]:
+    """Network bytes excluding loopback."""
+    recv, sent, _nics = _net_sample()
+    return recv, sent
 
 
 def _sample_io() -> dict:
     now = time.monotonic()
     dr, dw = _disk_counters()
-    nr, ns = _net_counters()
+    nr, ns, nics = _net_sample()
     return {
         "t": now,
         "disk_read": dr,
         "disk_write": dw,
         "net_recv": nr,
         "net_sent": ns,
+        "nics": nics,
     }
 
 
@@ -86,6 +97,7 @@ def _update_rates_from_sample(sample: dict) -> dict:
             "disk_write_mbs": _last_rates.get("disk_write_mbs", 0.0),
             "net_recv_mbs": _last_rates.get("net_recv_mbs", 0.0),
             "net_sent_mbs": _last_rates.get("net_sent_mbs", 0.0),
+            "per_nic": list(_last_rates.get("per_nic") or []),
             "ready": _last_rates.get("ready", False),
         }
         if _prev_io is not None:
@@ -99,11 +111,35 @@ def _update_rates_from_sample(sample: dict) -> dict:
                 "disk_write_mbs": mbs(sample["disk_write"], _prev_io["disk_write"]),
                 "net_recv_mbs": mbs(sample["net_recv"], _prev_io["net_recv"]),
                 "net_sent_mbs": mbs(sample["net_sent"], _prev_io["net_sent"]),
+                "per_nic": _per_nic_rates(
+                    sample.get("nics") or {},
+                    _prev_io.get("nics") or {},
+                    mbs,
+                ),
                 "ready": True,
             }
             _last_rates.update(rates)
         _prev_io = sample
         return dict(rates)
+
+
+def _per_nic_rates(
+    cur: dict[str, tuple[int, int]],
+    prev: dict[str, tuple[int, int]],
+    mbs,
+) -> list[dict]:
+    rows: list[dict] = []
+    for name, (rnow, snow) in cur.items():
+        r0, s0 = prev.get(name, (rnow, snow))
+        rows.append(
+            {
+                "name": name,
+                "recv": mbs(rnow, r0),
+                "sent": mbs(snow, s0),
+            }
+        )
+    rows.sort(key=lambda n: (n["recv"] + n["sent"]), reverse=True)
+    return rows
 
 
 def _throughput() -> dict:
@@ -250,6 +286,7 @@ def get_vitals(needs: frozenset[str] | None = None) -> dict:
             "disk_write_mbs": rates.get("disk_write_mbs", 0.0),
             "net_recv_mbs": rates.get("net_recv_mbs", 0.0),
             "net_sent_mbs": rates.get("net_sent_mbs", 0.0),
+            "per_nic": rates.get("per_nic") or [],
             "ready": bool(rates.get("ready")),
         }
         out["counters"] = {

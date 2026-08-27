@@ -20,6 +20,7 @@ class Snapshot:
     _net_routes: dict | None = field(default=None, repr=False)
     _net_wifi: dict | None = field(default=None, repr=False)
     _net_public: dict | None = field(default=None, repr=False)
+    _net_ping: dict | None = field(default=None, repr=False)
 
     def reuse_inventory(self, data: dict) -> None:
         """Use a previously collected inventory (live ticks skip lspci/DMI)."""
@@ -73,3 +74,10 @@ class Snapshot:
 
             self._net_public = collect_public_ip()
         return self._net_public
+
+    def net_ping(self) -> dict:
+        if self._net_ping is None:
+            from backend.collectors.network import collect_gateway_ping
+
+            self._net_ping = collect_gateway_ping()
+        return self._net_ping

@@ -90,6 +90,7 @@ si net connections      # every socket (process, local → remote)
 si net listen           # listening ports
 si net ip               # addresses per interface
 si net wifi             # connected SSID + nearby networks
+si net ping             # ping default gateway (LAN)
 si net public           # public IP (needs internet)
 ```
 
@@ -114,6 +115,18 @@ si scan --json --redact
 Other flags: `--plain` / `-p` · `--verbose` / `-v` · `--interval` · `--graph` · `--no-logo` · `--pci`
 
 `--json` works on any command.
+
+---
+
+## Optional web UI
+
+The product is still the terminal. If you want a page in a browser:
+
+```bash
+si gui
+```
+
+It stays on this machine (`127.0.0.1:8000`) and prints a link to copy. Ctrl+C stops it. `si web` is the same. `--port` if 8000 is busy; `--redact` masks serials there too.
 
 ---
 

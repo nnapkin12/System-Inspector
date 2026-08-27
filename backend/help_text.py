@@ -51,7 +51,8 @@ Stuck?  si help
   si net connections      every socket (process, local → remote)
   si net listen           listening ports
   si net ip               addresses per interface
-  si net wifi             SSID + signal (laptops)
+  si net wifi             SSID, dBm, channel, nearby APs
+  si net ping             ping the default gateway (LAN)
   si net dns              DNS servers
   si net gateway          default router
   si net routes           routing table
@@ -59,6 +60,7 @@ Stuck?  si help
 
   Also: network/eth→net  conn/conns/sockets→connections
         listening/ports→listen  wlan/wireless→wifi
+        ping/latency/rtt→ping
 
   connections/listen may need sudo for full process names on some systems.
   connections are color-coded (green / yellow / red).
@@ -72,6 +74,7 @@ Stuck?  si help
 
   Snapshots (print once):  si os  si motherboard  si display  si scan
                            si version  si net public  si net connections
+                           si net ping  si net wifi
   si gpu --once      one snapshot of a live-worthy command
 
   `si live …` still works. While live: type cpu / gpu / temps to switch
@@ -102,4 +105,12 @@ Stuck?  si help
   --pci              extra PCI detail with si scan
 
   si gpu --json   si gpu --once   si status --plain   si gpu --no-logo
+
+── Optional web UI ─────────────────────────────────────────
+
+  si gui             local page in a browser (127.0.0.1:8000)
+  si web             same
+  si gui --port 9000 pick a port if 8000 is busy
+
+  Prints a link to copy. Ctrl+C stops it. The CLI is still the main tool.
 """.strip()

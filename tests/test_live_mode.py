@@ -9,7 +9,9 @@ def test_gpu_is_liveable():
     assert query_is_liveable(["net"]) is True
 
 
-def test_os_and_scan_are_snapshots():
+def test_gui_words_are_not_liveable():
+    assert query_is_liveable(["gui"]) is False
+    assert query_is_liveable(["web"]) is False
     assert query_is_liveable(["os"]) is False
     assert query_is_liveable(["kernel"]) is False
     assert query_is_liveable(["motherboard"]) is False
@@ -24,6 +26,7 @@ def test_net_slices_are_snapshots():
     assert query_is_liveable(["net", "public"]) is False
     assert query_is_liveable(["net", "connections"]) is False
     assert query_is_liveable(["net", "listen"]) is False
+    assert query_is_liveable(["net", "ping"]) is False
 
 
 def test_mixed_cpu_os_is_snapshot():

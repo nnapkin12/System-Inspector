@@ -32,6 +32,9 @@ NET_FIELD_ALIASES: dict[str, str] = {
     "wireless": "wifi",
     "public": "public",
     "publicip": "public",
+    "ping": "ping",
+    "latency": "ping",
+    "rtt": "ping",
 }
 
 NET_DETAIL_FIELDS = frozenset(NET_FIELD_ALIASES.values())

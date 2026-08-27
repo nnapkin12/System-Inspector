@@ -1,6 +1,6 @@
 # Architecture
 
-System Inspector is a local CLI. It reads Linux system interfaces (sysfs, `/proc`, psutil, optional `lspci` / `nmcli`) and prints hardware stats or JSON. There is no server, no config file, and no background daemon.
+System Inspector is a local CLI. It reads Linux system interfaces (sysfs, `/proc`, psutil, optional `lspci` / `nmcli`) and prints hardware stats or JSON. There is no config file and no background daemon. `si gui` is an optional localhost page; it is not required and does not run unless you start it.
 
 ## Data flow
 
@@ -20,9 +20,12 @@ flowchart LR
   OUT --> FMT
   CLI --> RED[redact.py optional]
   RED --> OUT
+  CLI -.-> GUI[optional si gui]
+  GUI --> RQ
+  GUI --> WEB[web/ static page]
 ```
 
-1. **`sysinspect.py`** — argparse, dispatch, `--json` / `--plain` / `--once` / `--redact`.
+1. **`sysinspect.py`** — argparse, dispatch, `--json` / `--plain` / `--once` / `--redact`. `si gui` is a mode (like `live`), not a hardware resource.
 2. **`live_mode.py`** — which queries refresh on a TTY (`si gpu`) vs print once (`si os`).
 3. **`run_query()`** in `resources.py` — turns tokens like `gpu temp` into one or more resource payloads. Collector failures return `{"ok": false, ...}` instead of crashing the CLI.
 4. **`Snapshot`** — lazy cache for inventory, vitals, and expensive net slices (connections, listen, public IP, …) for the lifetime of one query. Live ticks may reuse inventory via `InventoryCache`.
@@ -51,6 +54,8 @@ flowchart LR
 | `backend/live_query.py` | Live-mode query timeout + inventory reuse |
 | `backend/redact.py` | Sensitive field masking |
 | `backend/help_text.py` | Text for `si help` |
+| `backend/gui.py` | Optional localhost HTTP (`si gui`); stdlib only |
+| `web/` | Static page for that optional UI |
 | `tests/` | pytest |
 
 ## Collectors
@@ -100,12 +105,16 @@ On a TTY, sensor commands (`cpu`, `gpu`, `ram`, `temps`, `status`, `disk`, `net`
 
 If collection exceeds **2.5s**, the UI returns immediately, keeps the previous payload, and shows **refresh slow**. The slow worker is left running; the next refresh reaps it instead of stacking another query. One-shot commands (`si net public`) are not capped.
 
+## Optional web UI (`si gui`)
+
+A thin stdlib `http.server` in `backend/gui.py`. Default bind is **127.0.0.1:8000**. `/api/query?q=…` is the same token language as the CLI and goes through `run_query()` plus the 30s `InventoryCache`. Static files live in `web/`. New CLI resources do not automatically get a page; the JSON API will still serve them.
+
 ## Security and privacy
 
-- **Local only** — nothing listens on a port.
+- **Local only** — nothing listens on a port unless you run `si gui`, which binds **127.0.0.1**.
 - **Subprocess** — `run_cmd()` uses argument lists and timeouts; no `shell=True`.
-- **Network** — only `si net public` calls an external HTTPS IP service (user-initiated).
-- **Sensitive data** — scan, board, and `--json` dumps can include DMI serials, UUIDs, SKUs, connection tables. Use **`--redact`** when piping logs or sharing output (masks serials, UUIDs, boot_id, part_number, sku, asset_tag). IPs, MACs, hostnames, and SSIDs are left intact.
+- **Network** — only `si net public` calls an external HTTPS IP service (user-initiated). The web page does not fetch public IP unless you click it. `si net ping` is ICMP to the **default gateway** on the LAN.
+- **Sensitive data** — scan, board, and `--json` dumps can include DMI serials, UUIDs, SKUs, connection tables. Use **`--redact`** when piping logs or sharing output (masks serials, UUIDs, boot_id, part_number, sku, asset_tag). IPs, MACs, hostnames, and SSIDs are left intact. `si gui --redact` applies the same mask to the page API.
 - **Permissions** — `net connections` / `listen` may need elevated privileges on some systems for full process names.
 
 ## Adding a new command
@@ -116,6 +125,7 @@ If collection exceeds **2.5s**, the UI returns immediately, keeps the previous p
 4. Add a branch in `format.py` `format_human()` for display.
 5. If it appears in live mode, extend `extract_metrics()` in `tui.py` and `LIVE_RESOURCES` in `live_mode.py` if it should auto-refresh.
 6. Add tests in `tests/` for parsing and formatting.
+7. The optional web page is hand-written in `web/`; skip it unless the command should show up there too. `/api/query` already speaks the CLI token language.
 
 ## Dev commands
 

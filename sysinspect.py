@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.format import format_human  # noqa: E402
+from backend.gui import GUI_WORDS, is_gui_command, run_gui  # noqa: E402
 from backend.help_text import FULL_HELP  # noqa: E402
 from backend.live_loop import run_interactive_live, run_piped_live  # noqa: E402
 from backend.live_mode import should_enter_live  # noqa: E402
@@ -77,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Watch interval seconds (default 1)",
     )
     parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Listen port for si gui (localhost, default 8000)",
+    )
+    parser.add_argument(
         "--graph",
         "--graphs",
         dest="graph",
@@ -113,6 +120,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.help or not tokens or [t.lower() for t in tokens] == ["help"]:
         _print_help(color=color, plain=plain)
         return 0
+
+    if is_gui_command(tokens):
+        if args.port < 0 or args.port > 65535:
+            print("si gui --port must be 0–65535")
+            return 2
+        return run_gui(
+            port=args.port,
+            redact=args.redact,
+            verbose=verbose,
+            include_pci=args.pci,
+            json_mode=args.json,
+        )
+
+    extras = [t for t in tokens if t.lower() in GUI_WORDS]
+    if extras:
+        print("si gui starts the optional web UI and does not take extra words.")
+        print("Try:  si gui")
+        return 2
 
     show_graph = bool(force_graph or args.graph) and not plain
     resources, _fields, _unknown = parse_query(tokens)

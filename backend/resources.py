@@ -513,6 +513,7 @@ def resource_net(snap: Snapshot) -> dict:
             "rates_mbs": {
                 "recv": rates.get("net_recv_mbs"),
                 "sent": rates.get("net_sent_mbs"),
+                "per_nic": rates.get("per_nic") or [],
             },
             "totals": (vit.get("network") or {}).get("total"),
             "addresses": static.get("addresses"),
@@ -706,6 +707,8 @@ def _filter_net(data: dict, fields: set[str], snap: Snapshot | None) -> dict:
         out["wifi"] = snap.net_wifi()
     if "public" in fields:
         out["public"] = snap.net_public_ip()
+    if "ping" in fields:
+        out["ping"] = snap.net_ping()
     return out
 
 

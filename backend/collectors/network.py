@@ -4,11 +4,23 @@ import re
 import socket
 import struct
 import time
+from pathlib import Path
 from typing import Any
 
 import psutil
 
 from .util import read_text, run_cmd, safe_dict
+
+
+_SKIP_NIC_PREFIXES = ("docker", "br-", "veth", "virbr", "vmnet")
+
+
+def keep_nic(name: str) -> bool:
+    """Real-ish NICs for per-interface rates (hide docker/bridge spam)."""
+    low = (name or "").lower()
+    if not low or low == "lo" or low.startswith("lo:"):
+        return False
+    return not any(low.startswith(p) for p in _SKIP_NIC_PREFIXES)
 
 
 def _family_label(family: Any) -> str:
@@ -515,45 +527,287 @@ def collect_routes() -> dict:
 
 
 def collect_wifi() -> dict:
+    fields = "ACTIVE,SSID,CHAN,FREQ,SIGNAL,RATE,SECURITY"
     nm = run_cmd(
-        ["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi"],
-        timeout=2.0,
+        ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "--rescan", "no"],
+        timeout=3.0,
     )
+    if not nm:
+        nm = run_cmd(
+            ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "--rescan", "yes"],
+            timeout=12.0,
+        )
+    if not nm:
+        nm = run_cmd(
+            ["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "no"],
+            timeout=3.0,
+        )
+    networks: list[dict] = []
     if nm:
-        active = None
-        networks: list[dict] = []
         for line in nm.splitlines():
-            parts = line.split(":")
-            if len(parts) < 4:
-                continue
-            entry = safe_dict(
-                active=parts[0] == "yes",
-                ssid=parts[1] or None,
-                signal=int(parts[2]) if parts[2].isdigit() else None,
-                security=parts[3] or None,
-            )
-            networks.append(entry)
-            if entry.get("active"):
-                active = entry
-        if networks:
-            return safe_dict(
-                available=True,
-                active=active,
-                networks=networks,
-                source="nmcli",
-            )
+            entry = _parse_nmcli_wifi_row(line)
+            if entry:
+                networks.append(entry)
+
+    link = _wifi_link_info()
+    active = next((n for n in networks if n.get("active")), None)
+    if active and link:
+        for key in ("signal_dbm", "freq_mhz", "channel", "bitrate", "ssid"):
+            if link.get(key) is not None and active.get(key) is None:
+                active[key] = link[key]
+        if link.get("ssid") and not active.get("ssid"):
+            active["ssid"] = link["ssid"]
+    elif link and not active:
+        active = safe_dict(active=True, **link)
+        networks.insert(0, dict(active))
+
+    if networks or active:
+        channels = wifi_channel_counts(networks)
+        yours = (active or {}).get("channel")
+        on_yours = channels.get(yours, 0) if yours is not None else 0
+        return safe_dict(
+            available=True,
+            active=active,
+            networks=networks,
+            channels=[{"channel": ch, "count": n} for ch, n in sorted(channels.items())],
+            yours_channel=yours,
+            aps_on_channel=on_yours or None,
+            source="nmcli" if nm else "iw",
+        )
 
     iw = run_cmd(["iwgetid", "-r"], timeout=2.0)
     if iw:
         return safe_dict(
             available=True,
-            active=safe_dict(ssid=iw, active=True),
+            active=safe_dict(ssid=iw, active=True, **(link or {})),
             source="iwgetid",
         )
 
     return safe_dict(
         available=False,
         note="WiFi info not available (install NetworkManager/nmcli or connect via WiFi).",
+    )
+
+
+def _parse_nmcli_wifi_row(line: str) -> dict | None:
+    parts = split_nmcli_line(line)
+    if len(parts) < 4:
+        return None
+    # ACTIVE,SSID,SIGNAL,SECURITY  or  ACTIVE,SSID,CHAN,FREQ,SIGNAL,RATE,SECURITY
+    active = parts[0] == "yes"
+    ssid = parts[1] or None
+    if len(parts) >= 7:
+        chan_s, freq_s, sig_s, rate, security = parts[2], parts[3], parts[4], parts[5], parts[6]
+    else:
+        chan_s, freq_s, rate = "", "", None
+        sig_s, security = parts[2], parts[3]
+    return safe_dict(
+        active=active,
+        ssid=ssid,
+        channel=_int_or_none(chan_s),
+        freq_mhz=_freq_mhz(freq_s),
+        signal=_int_or_none(sig_s),
+        bitrate=rate or None,
+        security=security or None,
+    )
+
+
+def split_nmcli_line(line: str) -> list[str]:
+    """Split nmcli -t output; `\\:` is a literal colon (SSIDs, etc.)."""
+    parts: list[str] = []
+    buf: list[str] = []
+    i = 0
+    while i < len(line):
+        if line[i] == "\\" and i + 1 < len(line):
+            buf.append(line[i + 1])
+            i += 2
+            continue
+        if line[i] == ":":
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(line[i])
+        i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _int_or_none(value: str | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text.split()[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _freq_mhz(value: str | None) -> int | None:
+    n = _int_or_none(value)
+    if n is None:
+        return None
+    # nmcli sometimes reports Hz
+    if n > 100_000:
+        n = int(round(n / 1_000_000))
+    return n
+
+
+def wifi_channel_counts(networks: list[dict]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for row in networks:
+        ch = row.get("channel")
+        if ch is None:
+            continue
+        try:
+            key = int(ch)
+        except (TypeError, ValueError):
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def wifi_band(freq_mhz: int | None) -> str | None:
+    if freq_mhz is None:
+        return None
+    if 2400 <= freq_mhz < 2500:
+        return "2.4 GHz"
+    if 4900 <= freq_mhz < 5900:
+        return "5 GHz"
+    if 5900 <= freq_mhz < 7200:
+        return "6 GHz"
+    return None
+
+
+def _wifi_ifaces() -> list[str]:
+    root = Path("/sys/class/net")
+    if not root.is_dir():
+        return []
+    names: list[str] = []
+    for entry in sorted(root.iterdir()):
+        if (entry / "wireless").exists() or (entry / "phy80211").exists():
+            names.append(entry.name)
+    return names
+
+
+def _wifi_link_info() -> dict:
+    for iface in _wifi_ifaces():
+        raw = run_cmd(["iw", "dev", iface, "link"], timeout=2.0)
+        if not raw or "Not connected" in raw:
+            continue
+        parsed = parse_iw_link(raw)
+        if parsed:
+            parsed["interface"] = iface
+            return parsed
+    return {}
+
+
+def parse_iw_link(raw: str) -> dict:
+    ssid = None
+    signal_dbm = None
+    freq_mhz = None
+    bitrate = None
+    for line in raw.splitlines():
+        s = line.strip()
+        low = s.lower()
+        if low.startswith("ssid:"):
+            ssid = s.split(":", 1)[1].strip() or None
+        elif "signal:" in low:
+            m = re.search(r"(-\d+(?:\.\d+)?)\s*dBm", s, flags=re.I)
+            if m:
+                signal_dbm = round(float(m.group(1)), 1)
+        elif low.startswith("freq:"):
+            freq_mhz = _int_or_none(s.split(":", 1)[1])
+        elif "tx bitrate:" in low or low.startswith("tx bitrate"):
+            bitrate = s.split(":", 1)[-1].strip() or None
+    channel = _channel_from_freq(freq_mhz)
+    return safe_dict(
+        ssid=ssid,
+        signal_dbm=signal_dbm,
+        freq_mhz=freq_mhz,
+        channel=channel,
+        bitrate=bitrate,
+    )
+
+
+def _channel_from_freq(freq_mhz: int | None) -> int | None:
+    if freq_mhz is None:
+        return None
+    # Common 2.4 GHz: 2412 + 5*(ch-1)
+    if 2412 <= freq_mhz <= 2484:
+        if freq_mhz == 2484:
+            return 14
+        return 1 + (freq_mhz - 2412) // 5
+    return None
+
+
+def parse_ping_output(raw: str) -> dict:
+    """Parse Linux/iputils ping -c N stdout."""
+    sent = recv = loss_pct = None
+    m = re.search(
+        r"(\d+)\s+packets transmitted,\s+(\d+)\s+(?:packets\s+)?received.*?(\d+(?:\.\d+)?)%\s+packet loss",
+        raw,
+        flags=re.I | re.S,
+    )
+    if m:
+        sent, recv, loss_pct = int(m.group(1)), int(m.group(2)), float(m.group(3))
+    rtt_min = rtt_avg = rtt_max = None
+    r = re.search(
+        r"(?:rtt|round-trip)\s+min/avg/max(?:/mdev)?\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)",
+        raw,
+        flags=re.I,
+    )
+    if r:
+        rtt_min, rtt_avg, rtt_max = (round(float(x), 2) for x in r.groups())
+    health = "unknown"
+    if loss_pct is not None:
+        if loss_pct >= 50 or (recv is not None and recv == 0):
+            health = "bad"
+        elif loss_pct > 0 or (rtt_avg is not None and rtt_avg >= 80):
+            health = "warn"
+        else:
+            health = "good"
+    return safe_dict(
+        packets_sent=sent,
+        packets_recv=recv,
+        loss_percent=loss_pct,
+        rtt_min_ms=rtt_min,
+        rtt_avg_ms=rtt_avg,
+        rtt_max_ms=rtt_max,
+        health=health,
+    )
+
+
+def collect_gateway_ping() -> dict:
+    """ICMP to the default gateway only — LAN check, not a speedtest."""
+    gw = collect_gateway()
+    target = gw.get("gateway")
+    if not target:
+        return safe_dict(
+            available=False,
+            gateway=gw,
+            note=gw.get("note") or "No default gateway to ping.",
+        )
+    raw = run_cmd(
+        ["ping", "-c", "3", "-n", "-W", "1", str(target)],
+        timeout=6.0,
+        ok_returncodes=(0, 1, 2),
+    )
+    if not raw:
+        return safe_dict(
+            available=False,
+            target=target,
+            gateway=gw,
+            note="ping failed (missing ping, blocked ICMP, or timed out).",
+        )
+    stats = parse_ping_output(raw)
+    return safe_dict(
+        available=True,
+        target=target,
+        interface=gw.get("interface"),
+        **stats,
     )
 
 

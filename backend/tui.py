@@ -800,6 +800,7 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "dns",
                 "wifi",
                 "public",
+                "ping",
                 "ip",
                 "interfaces",
             }
@@ -826,6 +827,20 @@ def extract_metrics(payload: dict) -> list[dict[str, Any]]:
                 "rate": _f(rates.get("sent")),
             }
         )
+        nics = rates.get("per_nic") or []
+        if len(nics) > 1:
+            for nic in nics[:3]:
+                name = nic.get("name") or "nic"
+                rows.append(
+                    {
+                        "key": f"nic_{name}",
+                        "label": name,
+                        "pct": None,
+                        "temp_c": None,
+                        "extra": f"↓ {nic.get('recv') or 0}  ↑ {nic.get('sent') or 0} MB/s",
+                        "rate": _f(nic.get("recv")),
+                    }
+                )
         return rows
 
     if r == "fans":

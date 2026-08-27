@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>System Inspector</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">SI</span>
+      <div>
+        <h1>System Inspector</h1>
+        <p class="sub" id="tagline">local monitor</p>
+      </div>
+    </div>
+    <div class="top-meta" id="hostline">
+      <span class="pulse" id="pulse" title="talking to the local server"></span>
+      <span id="hosttext"></span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="side" aria-label="Sections">
+      <p class="nav-label">Watch</p>
+      <a href="#overview" data-page="overview">Overview</a>
+      <a href="#cpu" data-page="cpu">CPU</a>
+      <a href="#gpu" data-page="gpu">GPU</a>
+      <a href="#memory" data-page="memory">Memory</a>
+      <a href="#storage" data-page="storage">Storage</a>
+      <a href="#network" data-page="network">Network</a>
+      <p class="nav-label">Machine</p>
+      <a href="#sensors" data-page="sensors">Sensors</a>
+      <a href="#system" data-page="system">System</a>
+    </nav>
+    <main id="main">
+      <p class="muted pad">Loading…</p>
+    </main>
+  </div>
+
+  <footer class="foot">
+    local · copy the link from the terminal · Ctrl+C there stops this
+  </footer>
+
+  <noscript>
+    <p class="noscript">This page needs JavaScript. The CLI does not — try <code>si status</code>.</p>
+  </noscript>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -16,7 +16,12 @@ _hwmon_at: float = 0.0
 HWMON_TEMPS_TTL = 0.25
 
 
-def run_cmd(args: list[str], timeout: float = 3.0) -> str | None:
+def run_cmd(
+    args: list[str],
+    timeout: float = 3.0,
+    *,
+    ok_returncodes: tuple[int, ...] = (0,),
+) -> str | None:
     """Run a command; return stdout or None if unavailable/fails."""
     if not args or not shutil.which(args[0]):
         return None
@@ -30,7 +35,7 @@ def run_cmd(args: list[str], timeout: float = 3.0) -> str | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if completed.returncode != 0:
+    if completed.returncode not in ok_returncodes:
         return None
     return completed.stdout.strip() or None
 

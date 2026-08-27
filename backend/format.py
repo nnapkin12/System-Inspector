@@ -15,6 +15,20 @@ _CPU_TEMP_MARKERS = ("k10temp", "coretemp", "cpu", "tctl", "tdie", "package id")
 _GPU_TEMP_MARKERS = ("nv_temp", "nvidia", "amdgpu", "radeon", "nouveau")
 
 
+def _wifi_band(freq_mhz: Any) -> str | None:
+    try:
+        mhz = int(freq_mhz)
+    except (TypeError, ValueError):
+        return None
+    if 2400 <= mhz < 2500:
+        return "2.4 GHz"
+    if 4900 <= mhz < 5900:
+        return "5 GHz"
+    if 5900 <= mhz < 7200:
+        return "6 GHz"
+    return None
+
+
 def _is_cpu_or_gpu_temp_label(label: str, gpu_names: set[str]) -> bool:
     low = (label or "").lower()
     if any(m in low for m in _CPU_TEMP_MARKERS):
@@ -457,11 +471,31 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
             if not block.get("available"):
                 return f"  {block.get('note') or '(not available)'}"
             active = block.get("active") or {}
+            lines: list[str] = []
             if active.get("ssid"):
+                bits: list[str] = [str(active.get("ssid"))]
                 sig = active.get("signal")
-                sig_s = f"{sig}%" if sig is not None else "—"
-                sec = active.get("security") or "—"
-                if sig is None:
+                dbm = active.get("signal_dbm")
+                if sig is not None:
+                    bits.append(f"{sig}%")
+                if dbm is not None:
+                    bits.append(f"{dbm} dBm")
+                ch = active.get("channel")
+                band = _wifi_band(active.get("freq_mhz"))
+                if ch is not None:
+                    bits.append(f"ch {ch}" + (f" ({band})" if band else ""))
+                elif band:
+                    bits.append(band)
+                if active.get("security"):
+                    bits.append(str(active.get("security")))
+                if dbm is not None:
+                    if dbm >= -50:
+                        wifi_health = "good"
+                    elif dbm >= -70:
+                        wifi_health = "warn"
+                    else:
+                        wifi_health = "bad"
+                elif sig is None:
                     wifi_health = "unknown"
                 elif sig >= 70:
                     wifi_health = "good"
@@ -469,18 +503,45 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
                     wifi_health = "warn"
                 else:
                     wifi_health = "bad"
-                line = f"  {active.get('ssid')}  ·  {sig_s}  ·  {sec}"
-                lines = [paint_health(line, wifi_health, color=color)]
+                lines.append(paint_health("  " + "  ·  ".join(bits), wifi_health, color=color))
+                on_ch = block.get("aps_on_channel")
+                if ch is not None and on_ch:
+                    extra = f"  {on_ch} AP{'s' if on_ch != 1 else ''} on ch {ch}"
+                    if on_ch >= 4:
+                        extra += "  (busy)"
+                    lines.append(extra)
             else:
-                lines = [f"  {active.get('ssid') or '—'}"]
-            nearby = [n for n in (block.get("networks") or []) if not n.get("active") and n.get("ssid")]
+                lines.append(f"  {active.get('ssid') or '—'}")
+            nearby = [
+                n
+                for n in (block.get("networks") or [])
+                if not n.get("active")
+                and n.get("ssid")
+                and (n.get("ssid"), n.get("channel")) != (active.get("ssid"), active.get("channel"))
+            ]
             if nearby:
                 lines.append("  nearby")
+                seen: set[tuple] = set()
+                unique: list[dict] = []
                 for n in nearby:
-                    sig = n.get("signal")
-                    sig_s = f"{sig}%" if sig is not None else "—"
-                    sec = n.get("security") or "—"
-                    lines.append(f"    {n.get('ssid')}  ·  {sig_s}  ·  {sec}")
+                    key = (n.get("ssid"), n.get("channel"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    unique.append(n)
+                shown = unique[:12]
+                for n in shown:
+                    bits = [str(n.get("ssid"))]
+                    if n.get("signal") is not None:
+                        bits.append(f"{n.get('signal')}%")
+                    if n.get("channel") is not None:
+                        bits.append(f"ch {n.get('channel')}")
+                    if n.get("security"):
+                        bits.append(str(n.get("security")))
+                    lines.append("    " + "  ·  ".join(bits))
+                more = len(unique) - len(shown)
+                if more > 0:
+                    lines.append(f"    +{more} more")
             return "\n".join(lines)
 
         if net_fields == {"public"}:
@@ -489,10 +550,36 @@ def format_human(payload: dict, *, color: bool = False, verbose: bool = False) -
                 return f"  {block.get('address')}"
             return f"  {block.get('note') or 'unavailable'}"
 
+        if net_fields == {"ping"}:
+            from backend.tui import paint_health
+
+            block = d.get("ping") or {}
+            if not block.get("available"):
+                return f"  {block.get('note') or '(unavailable)'}"
+            target = block.get("target") or "—"
+            iface = block.get("interface")
+            loss = block.get("loss_percent")
+            avg = block.get("rtt_avg_ms")
+            bits = [f"gateway  {target}"]
+            if iface:
+                bits.append(str(iface))
+            if loss is not None:
+                bits.append(f"{loss:g}% loss")
+            if avg is not None:
+                bits.append(f"{avg} ms")
+            line = "  " + "  ·  ".join(bits)
+            return paint_health(line, block.get("health") or "unknown", color=color)
+
         rates = d.get("rates_mbs") or {}
         lines = [
             f"Network  ↓ {rates.get('recv')}  ↑ {rates.get('sent')} MB/s",
         ]
+        per_nic = rates.get("per_nic") or []
+        if len(per_nic) > 1:
+            for nic in per_nic:
+                lines.append(
+                    f"  {(nic.get('name') or '—'):10}  ↓ {nic.get('recv')}  ↑ {nic.get('sent')} MB/s"
+                )
         gw = d.get("gateway") or {}
         if gw.get("gateway"):
             lines.append(f"  gateway  {gw.get('gateway')}  ·  iface {gw.get('interface') or '—'}")
